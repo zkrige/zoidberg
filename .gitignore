@@ -1,0 +1,47 @@
+logs/
+state/
+store/
+secrets.json
+lib/config.json
+.claude/*
+__pycache__/
+node_modules/
+
+# Credentials and ad-hoc scratch files at repo root.
+# The Telegram bot's auto-push runs `git add -A` in /app, so anything
+# Claude writes here gets committed. Block credential files and
+# top-level dotfile scripts to prevent another leak.
+.netrc
+.fetch_*.sh
+.test_*.sh
+.tmp_*
+*.token
+*credentials*
+.env
+.env.*
+
+# Local scratch from MCP/browser sessions
+.playwright-mcp/
+.superpowers/
+*.png
+
+# firebase CLI debug artifacts (rewritten/deleted on every run)
+firebase-debug.log
+firebase-debug.*.log
+*-debug.log
+lib/schedule.json
+lib/models.json
+
+# Operator overlays: independent clones, not submodules (bind-mounted in prod).
+# self-update.sh recreates these directories before any compose action; they are
+# the mount points for /app/config and /app/skills.
+config/
+skills/
+
+# Exception: the /setup skill ships with the framework so a fresh install
+# has it immediately, even though .claude/ and skills/ are otherwise
+# ignored. settings.local.json and everything else under .claude/ stays
+# ignored via the .claude/* rule above.
+!/.claude/skills/
+!/.claude/skills/setup/
+!/.claude/skills/setup/SKILL.md

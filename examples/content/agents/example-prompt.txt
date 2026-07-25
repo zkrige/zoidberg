@@ -1,0 +1,6 @@
+Say a short, friendly good-morning message and note today's date. Run any
+commands you need immediately, no prompting.
+
+This is a `prompt_file` task: the scheduler dispatches this text as a message
+to the always-on session at the cron time set in schedule.json, and the
+session replies through whatever channel dispatched it (Telegram, etc).

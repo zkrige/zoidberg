@@ -1,0 +1,43 @@
+{
+  "projects": {
+    "example-project": {
+      "path_match": "example",
+      "health_url": "https://example.com",
+      "deploy_wait": 45
+    }
+  },
+  "bitbucket": {
+    "workspace": "YOUR_BITBUCKET_WORKSPACE",
+    "credentials_path": "~/.claude/config/credentials.json",
+    "account_id": "REPLACE_ME"
+  },
+  "git": {
+    "user_name": "Your Name",
+    "user_email": "you@example.com"
+  },
+  "google": {
+    "cloud_project": "YOUR_GCP_PROJECT",
+    "gsc_account": "you@example.com"
+  },
+  "backup": {
+    "restic_repository": "s3:s3.amazonaws.com/YOUR_BACKUP_BUCKET"
+  },
+  "session": {
+    "clear_context_tokens": 120000
+  },
+  "evolution": {
+    "cooldown_seconds": 10800
+  },
+  "whatsapp": {
+    "db_path": "~/.claude/mcp-servers/whatsapp-mcp-extended/whatsapp-bridge/store/messages.db",
+    "debounce_seconds": 30,
+    "target_group": "YOUR_TARGET_GROUP",
+    "self_jid": "REPLACE_ME",
+    "self_jid_legacy": "REPLACE_ME",
+    "bridge_api": "http://localhost:8080/api",
+    "webhook_port": 8769,
+    "model": "sonnet",
+    "effort": "low",
+    "notify_filter": "ACTION REQUIRED|FYI"
+  }
+}

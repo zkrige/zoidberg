@@ -1,0 +1,10 @@
+.git
+state/
+logs/
+secrets.json
+docs/
+*.log
+.DS_Store
+docker/whatsapp-bridge-src/.git
+docker/whatsapp-mcp-server/.git
+__pycache__/

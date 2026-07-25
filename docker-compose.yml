@@ -1,0 +1,35 @@
+services:
+  zoidberg:
+    build:
+      context: .
+      args:
+        # Optional image components, off by default. Enable a feature's build
+        # with e.g. ENABLE_WHATSAPP=1 docker compose up -d --build
+        ENABLE_WHATSAPP: ${ENABLE_WHATSAPP:-0}
+    container_name: zoidberg
+    restart: unless-stopped
+    volumes:
+      - ${REPO_PATH:-/opt/zoidberg}:/app
+      - claude-home:/home/claude/.claude
+      - ${SKILLS_PATH:-/opt/claude-skills}:/home/claude/.claude/skills
+      - ${SKILLS_PATH:-/opt/claude-skills}:/app/skills
+      - ${CONTENT_PATH:-/opt/zoidberg-config}:/app/config
+      - wa-bridge-store:/opt/whatsapp-bridge-store
+      - ${SSH_KEY_PATH:-~/.ssh/id_rsa}:/tmp/host-ssh-key:ro
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    environment:
+      - HOME=/home/claude
+      - TERM=xterm-256color
+      - CONTENT_DIR=/app/config
+      # Bridge API key is read from the content overlay (config/secrets.json) by
+      # docker/entrypoint.sh. Set this var in the host env only to override.
+      - WHATSAPP_BRIDGE_API_KEY=${WHATSAPP_BRIDGE_API_KEY:-}
+    ports:
+      - "${WA_BRIDGE_PORT:-8080}:8080"
+      - "${WA_WEBHOOK_PORT:-8769}:8769"
+
+volumes:
+  claude-home:
+  wa-bridge-store:

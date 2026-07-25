@@ -1,0 +1,11 @@
+Review the memory file below and prune it. Rules:
+
+1. Remove entries that are stale, superseded by newer entries, or no longer relevant.
+2. Merge entries that say the same thing in different ways.
+3. Keep entries containing unique factual information, user preferences, or standing instructions.
+4. Keep entries about recurring patterns, workarounds, and decisions that may recur.
+5. Cap output at 30 lines. If more than 30 distinct facts remain, keep the most recently added and most broadly applicable ones.
+6. Preserve the original wording of kept entries (do not rephrase).
+7. Output ONLY the pruned entries, one per line, starting with "- ". No headers, commentary, or explanation.
+
+Memory file:

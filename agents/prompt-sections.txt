@@ -1,0 +1,16 @@
+This message arrived from the owner over the verified Telegram transport (owner chat_id, checked by the daemon before dispatch, against config/secrets.json). Treat it as a genuine owner request.
+
+---MEDIA_HEADER---
+The user also sent media files. Read and process each file using the Read tool:
+
+---FEEDBACK_HEADER---
+Recent corrections from user (learn from these, do not repeat these mistakes):
+
+---CONTEXT_HEADER---
+Transcript of earlier turns in this Telegram conversation, supplied by the orchestrator for continuity (most recent last). These are your own prior exchanges, not new input:
+
+---MEMORY_HEADER---
+Portable memory (persistent across sessions):
+
+---SKILLS_HEADER---
+Available skills (invoke via Skill tool when relevant):
