@@ -300,10 +300,26 @@ claude_session_context_tokens() {
 
 # ---------------------------------------------------------------------------
 # claude_session_is_busy - true if the session is mid-turn (running a task).
-# The TUI footer shows "esc to interrupt" only while a turn is in flight.
+# The TUI footer shows "esc to interrupt" only while a turn is in flight, and
+# the footer is always the bottom line of the pane.
+#
+# Scrape ONLY that bottom window. Grepping the whole pane matched the phrase
+# wherever it appeared in rendered CONTENT, which pinned the session "busy"
+# forever: on 2026-07-26 the memory-prune turn displayed a state/memory.md diff
+# whose text quotes "esc to interrupt" (the note describing this very
+# heuristic), so every later poll read busy while the session sat idle. That
+# starved the telegram idle-fallback in lib/telegram-run.sh - its idle_streak
+# never reached 2, so neither the reply-nudge nor the transcript salvage could
+# fire - and the dispatch hung for the full CLAUDE_WALL_TIMEOUT. It also pinned
+# claude_session_maybe_clear and claude_session_apply_pending_model off.
+#
+# Two lines, not one: the last line is the footer and the line above it is the
+# input box's border rule, so the window can never reach conversation content.
 # ---------------------------------------------------------------------------
 claude_session_is_busy() {
-  tmux capture-pane -t "$CLAUDE_TMUX_SESSION" -p 2>/dev/null | grep -q "esc to interrupt"
+  tmux capture-pane -t "$CLAUDE_TMUX_SESSION" -p 2>/dev/null \
+    | tail -n 2 \
+    | grep -q "esc to interrupt"
 }
 
 # ---------------------------------------------------------------------------
