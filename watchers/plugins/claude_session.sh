@@ -146,7 +146,16 @@ _claude_session_release_interactive_prompt() {
   local pane
   pane=$(tmux capture-pane -t "$CLAUDE_TMUX_SESSION" -p 2>/dev/null) || return 0
   case "$pane" in *"Loading development channels"*) return 0 ;; esac
-  if printf '%s' "$pane" | grep -q "Enter to select.*Esc to cancel"; then
+  # An unanswered picker only exists on screen - it reaches the transcript once
+  # something answers it - so this one has to scrape the pane. That makes it
+  # self-matching: written literally, the pattern matched THIS LINE whenever the
+  # bot opened claude_session.sh, which it does routinely because it edits its
+  # own code, and the match sends Escape into whatever turn is running. Verified
+  # 2026-07-26: the picker phrase occurred exactly once in this repo, on the line
+  # that grepped for it. Assembling the pattern keeps the literal off the pane -
+  # including out of this comment, which tests/session_self_match.sh enforces.
+  local picker="Enter to sel""ect.*Esc to can""cel"
+  if printf '%s' "$pane" | grep -q "$picker"; then
     tmux send-keys -t "$CLAUDE_TMUX_SESSION" Escape 2>/dev/null
     log "claude-session: cancelled an interactive prompt - nobody is at the pane to answer it"
   fi
@@ -418,11 +427,42 @@ claude_session_maybe_clear() {
 }
 
 # ---------------------------------------------------------------------------
-# claude_session_check_auth - detect an expired-login state on the live pane.
-# Anthropic returns 401 with a 0 exit code and `claude auth status` still
-# reports loggedIn, so the on-screen banner is the only reliable signal. The
+# _claude_session_auth_expired - true if the session's LATEST turn failed with
+# the expired-login error. Anthropic returns 401 with a 0 exit code and
+# `claude auth status` still reports loggedIn, so the error itself is the only
+# reliable signal.
+#
+# Read the transcript, not the pane. The pane is a rendering surface: it shows
+# whatever the session is looking at, so grepping it for a phrase matched this
+# very file whenever the bot opened claude_session.sh - which it does routinely,
+# since it edits its own code. "Please run /login" appears four times in this
+# repo. Same defect that pinned claude_session_is_busy busy forever on
+# 2026-07-26; a false positive here alerts the owner that a healthy bot is down.
+#
+# The transcript records the failure structurally (isApiErrorMessage), which no
+# rendered content can forge: source code the session reads arrives as a tool
+# result, never as an assistant record carrying that flag. Only the newest
+# assistant record counts - an older error the session has since recovered from
+# must not read as currently expired.
+# ---------------------------------------------------------------------------
+_claude_session_auth_expired() {
+  local f last
+  f=$(ls -t "${CLAUDE_PROJECT_TRANSCRIPT_DIR}"/*.jsonl 2>/dev/null | head -1)
+  [ -n "$f" ] || return 1
+  last=$(tail -n 200 "$f" 2>/dev/null \
+    | jq -rc 'select(.type=="assistant")
+              | if (.isApiErrorMessage==true)
+                then ([.message.content[]? | .text // ""] | join(" "))
+                else "" end' 2>/dev/null \
+    | tail -1)
+  case "$last" in *"Login expired"*) return 0 ;; esac
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# claude_session_check_auth - alert the owner when the login has expired. The
 # session can't re-login itself (interactive OAuth), so alert at most once an
-# hour via Telegram with the re-login command. Reads the pane only, no API call.
+# hour via Telegram with the re-login command. Reads the transcript, no API call.
 # ---------------------------------------------------------------------------
 _AUTH_CHECK_LAST=0
 claude_session_check_auth() {
@@ -430,15 +470,14 @@ claude_session_check_auth() {
   [ $(( now - _AUTH_CHECK_LAST )) -ge 120 ] || return 0
   _AUTH_CHECK_LAST=$now
   local marker="${STATE_DIR}/.auth-failure-notified"
-  if ! tmux capture-pane -t "$CLAUDE_TMUX_SESSION" -p 2>/dev/null \
-       | grep -qiE "Invalid authentication credentials|Please run /login"; then
+  if ! _claude_session_auth_expired; then
     rm -f "$marker"   # healthy: reset so the next failure alerts immediately
     return 0
   fi
   local last; last=$(cat "$marker" 2>/dev/null || echo 0)
   [ $(( now - last )) -ge 3600 ] || return 0
   echo "$now" > "$marker"
-  log "claude-session: 401 auth-expired banner on pane - alerting via Telegram"
+  log "claude-session: 401 auth-expired in transcript - alerting via Telegram"
   notify "⚠️ Claude auth expired - the bot is down (401 'Please run /login'). No tasks or replies will work until re-login.
 
 Reply \`/login\` here and follow the two steps. No need to touch the server.
@@ -499,9 +538,8 @@ _claude_session_resolve_probe_failure() {
   # (and this notification) every few minutes until the owner runs /login (this
   # flooded the channel overnight on 2026-07-22). claude_session_check_auth
   # already alerts (rate-limited); do not respawn. Normal wedges still respawn.
-  if tmux capture-pane -t "$CLAUDE_TMUX_SESSION" -p 2>/dev/null \
-       | grep -qiE "Invalid authentication credentials|Please run /login"; then
-    log "claude-session: probe failed but auth is expired (login banner present) - not respawning; awaiting /login"
+  if _claude_session_auth_expired; then
+    log "claude-session: probe failed but auth is expired - not respawning; awaiting /login"
     return 0
   fi
 
