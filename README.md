@@ -50,6 +50,16 @@ If anything is interrupted, `cd /opt/zoidberg && ./setup.sh run` picks up from
 wherever it stopped. Provisioning a host now and configuring it later? Set
 `SKIP_SETUP=1` and the installer stops once the filesystem is ready.
 
+Want it somewhere other than `/opt`? Set `REPO_PATH` and nothing else changes:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zkrige/zoidberg/main/install.sh | REPO_PATH=~/zoidberg bash
+```
+
+Your config and skills directories default to siblings of it, the installer
+records all three in the repo's `.env`, and docker compose reads that. No file
+needs editing. `CONTENT_PATH` and `SKILLS_PATH` move those two independently.
+
 ## Your stuff stays yours
 
 This repo is the engine, and it is deliberately empty of opinions: no tasks, no

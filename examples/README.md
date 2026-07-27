@@ -35,13 +35,16 @@ content_path() { printf '%s/%s' "$CONTENT_DIR" "$1"; }
 
   ```yaml
   volumes:
-    - ${CONTENT_PATH:-/opt/zoidberg-config}:/app/config
+    - ${CONTENT_PATH:-../zoidberg-config}:/app/config
   environment:
     - CONTENT_DIR=/app/config
   ```
 
-  Point `CONTENT_PATH` at wherever you cloned your overlay repo on the host
-  (e.g. `/opt/zoidberg-config`) and the container sees it at `/app/config`.
+  The default is relative, and compose resolves it against the directory the
+  compose file is in, so an overlay cloned beside the framework repo just
+  works. `install.sh` and `setup.sh env` write the real `CONTENT_PATH` into
+  the repo's `.env`, which compose reads; point it anywhere and the container
+  still sees the overlay at `/app/config`.
 
 Everything that reads operator content goes through `content_path()`:
 `load_config` reads `content_path config.json`, `load_secrets` reads

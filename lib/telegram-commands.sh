@@ -47,25 +47,20 @@ telegram_cmd_restart() {
   return 0
 }
 
-# telegram_cmd_login_start - /login: start OAuth login, return auth URL
+# telegram_cmd_login_start - /login: start OAuth login, return auth URL.
+# The poll and verdict live in lib/claude-login.sh, shared with setup.sh.
 telegram_cmd_login_start() {
   local msg_text="$1"
   [[ "$msg_text" == "/login" ]] || return 1
-  tmux kill-session -t claude-login 2>/dev/null
-  tmux new-session -d -s claude-login -x 1000 -y 50
-  tmux send-keys -t claude-login "claude auth login --claudeai" Enter
-  sleep 8
   local login_url
-  login_url=$(tmux capture-pane -t claude-login -p 2>/dev/null \
-    | grep -oE "https://claude\.com/cai/oauth/authorize[^ ]+" | head -1)
-  if [ -n "$login_url" ]; then
+  if login_url=$(claude_login_start); then
     tg_send "Open this, approve, then reply: /login <code>
+The code expires after a few minutes, so send it while it is fresh.
 
 ${login_url}"
     log "telegram: /login started, sent auth URL"
   else
-    tmux kill-session -t claude-login 2>/dev/null
-    tg_send "Could not start login (no URL produced). Try /login again."
+    tg_send "Could not start login (no URL after ${CLAUDE_LOGIN_URL_TIMEOUT}s). Try /login again."
     log "telegram: /login produced no URL"
   fi
   return 0
@@ -80,53 +75,23 @@ _telegram_login_cred_expiry() {
   printf '%s' "$exp"
 }
 
-# _telegram_login_submit_code - Send the pasted code to the tmux login session
-_telegram_login_submit_code() {
-  local code="$1"
-  # -l sends the code as literal keystrokes; -- stops tmux parsing a code that
-  # starts with '-' as an option (which would silently drop the login).
-  tmux send-keys -t claude-login -l -- "$code"
-  tmux send-keys -t claude-login Enter
-  sleep 6
-  tmux kill-session -t claude-login 2>/dev/null
-}
-
-# _telegram_login_renewed - True if a newer credential was minted
-# Success = expiresAt in the future AND larger than before. A future-but-stale
-# expiresAt can coexist with a dead token (the 401-while-loggedIn case), so a
-# future timestamp alone is not proof.
-_telegram_login_renewed() {
-  local exp_after="$1" exp_before="$2" now_s
-  now_s=$(date +%s)
-  [[ "$exp_after" =~ ^[0-9]+$ ]] && [ "$(( exp_after / 1000 ))" -gt "$(( now_s + 60 ))" ] && [ "$exp_after" -gt "$exp_before" ]
-}
-
-# _telegram_login_report - Notify success/failure based on renewal verdict
-_telegram_login_report() {
-  if _telegram_login_renewed "$1" "$2"; then
+# telegram_cmd_login_code - /login <code>: submit the pasted OAuth code
+telegram_cmd_login_code() {
+  local msg_text="$1"
+  [[ "$msg_text" == "/login "* ]] || return 1
+  if ! tmux has-session -t "$CLAUDE_LOGIN_SESSION" 2>/dev/null; then
+    tg_send "No login in progress. Send /login first."
+    return 0
+  fi
+  if claude_login_submit "${msg_text#/login }" _telegram_login_cred_expiry; then
     rm -f "${STATE_DIR}/.auth-failure-notified"
     tmux kill-session -t "$CLAUDE_TMUX_SESSION" 2>/dev/null
     tg_send "Logged in. Restarting the bot session with fresh credentials, give it ~30s."
     log "telegram: /login success, respawning session"
   else
-    tg_send "Login did not complete (credentials not renewed). Re-run /login and re-check the code."
-    log "telegram: /login code submitted but credentials not renewed"
+    tg_send "Login did not complete. ${CLAUDE_LOGIN_REASON} Send /login for a fresh URL."
+    log "telegram: /login failed: ${CLAUDE_LOGIN_REASON}"
   fi
-}
-
-# telegram_cmd_login_code - /login <code>: submit the pasted OAuth code
-telegram_cmd_login_code() {
-  local msg_text="$1"
-  [[ "$msg_text" == "/login "* ]] || return 1
-  if ! tmux has-session -t claude-login 2>/dev/null; then
-    tg_send "No login in progress. Send /login first."
-    return 0
-  fi
-  local exp_before exp_after
-  exp_before=$(_telegram_login_cred_expiry)
-  _telegram_login_submit_code "${msg_text#/login }"
-  exp_after=$(_telegram_login_cred_expiry)
-  _telegram_login_report "$exp_after" "$exp_before"
   return 0
 }
 

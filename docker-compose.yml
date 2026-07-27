@@ -9,12 +9,20 @@ services:
     container_name: zoidberg
     restart: unless-stopped
     volumes:
-      - ${REPO_PATH:-/opt/zoidberg}:/app
+      # Relative sources resolve against this file's directory, so the defaults
+      # are "the repo you ran compose in, with its two sibling repos". At
+      # /opt/zoidberg that is byte-identical to the /opt literals these
+      # replace, and it is the same sibling rule scripts/self-update.sh uses.
+      # setup.sh writes the real paths into .env, which compose reads itself.
+      - ${REPO_PATH:-.}:/app
       - claude-home:/home/claude/.claude
-      - ${SKILLS_PATH:-/opt/claude-skills}:/home/claude/.claude/skills
-      - ${SKILLS_PATH:-/opt/claude-skills}:/app/skills
-      - ${CONTENT_PATH:-/opt/zoidberg-config}:/app/config
-      - wa-bridge-store:/opt/whatsapp-bridge-store
+      - ${SKILLS_PATH:-../claude-skills}:/home/claude/.claude/skills
+      - ${SKILLS_PATH:-../claude-skills}:/app/skills
+      - ${CONTENT_PATH:-../zoidberg-config}:/app/config
+      # Default is the named volume declared below; an absolute value makes it
+      # a bind mount instead. The container side is fixed either way, since
+      # docker/entrypoint.sh hardcodes it in the chown and in --store-dir.
+      - ${WA_STORE_PATH:-wa-bridge-store}:/opt/whatsapp-bridge-store
       - ${SSH_KEY_PATH:-~/.ssh/id_rsa}:/tmp/host-ssh-key:ro
     dns:
       - 1.1.1.1

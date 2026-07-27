@@ -51,6 +51,7 @@ telegram_init() {
   source "${REPO_DIR}/lib/telegram-queue.sh"
   source "${REPO_DIR}/lib/telegram-session.sh"
   source "${REPO_DIR}/lib/telegram-run.sh"
+  source "${REPO_DIR}/lib/claude-login.sh"
   source "${REPO_DIR}/lib/telegram-commands.sh"
   source "${REPO_DIR}/lib/telegram-process.sh"
   TG_TOKEN="$(get_secret '.telegram.bot_token')"

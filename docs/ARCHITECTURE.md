@@ -275,10 +275,13 @@ since `docker/` matches that path glob) - a SIGHUP reload cannot pick it up,
 because SIGHUP only re-execs the already-running `scheduler.sh` process; it
 never re-runs the entrypoint.
 
-`scripts/self-update.sh` also mirrors the same fetch/stash/pull-pop pattern for two
-sibling bind-mounted repos, the skills repo (`/opt/claude-skills`) and the
-content repo (`/opt/zoidberg-config`), running each one's `setup.sh` if present
-after a pull (`scripts/self-update.sh`).
+`scripts/self-update.sh` also mirrors the same fetch/stash/pull-pop pattern for
+two sibling bind-mounted repos, the skills repo (`$SKILLS_PATH`) and the content
+repo (`$CONTENT_PATH`), running each one's `setup.sh` if present after a pull
+(`scripts/self-update.sh`). Both paths come from `resolve_host_paths`
+(`lib/paths.sh`), which reads the repo's `.env`, so the rebuild it triggers
+mounts the same directories the install actually uses rather than compose's
+built-in defaults.
 
 `/reload` (Telegram command, `kill -HUP 1`) and `/restart` (`kill -TERM 1`)
 give an operator the same two levers manually: `/reload` re-execs the

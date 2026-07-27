@@ -181,7 +181,7 @@ made after it started.
 
 ## Step 6: skills are the user's own business
 
-Explain, do not act: `$SKILLS_DIR` (`/opt/claude-skills`, mounted into the
+Explain, do not act: `$SKILLS_DIR` (the host's `SKILLS_PATH`, mounted into the
 container) is the user's own directory or git repo of Claude Code skills for
 the bot to use. It can be empty, the bot still works with just its framework
 prompts. Point at `examples/` for the shape of the content overlay, but do

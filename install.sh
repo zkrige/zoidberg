@@ -38,12 +38,15 @@ err()   { printf '%s[error]%s %s\n' "$C_RED" "$C_RESET" "$*" >&2; }
 header(){ printf '\n%s== %s ==%s\n' "$C_BOLD" "$*" "$C_RESET"; }
 
 # Overridable so you can install to a different prefix, or point at a fork or a
-# local clone. The defaults match docker-compose.yml's REPO_PATH/CONTENT_PATH/
-# SKILLS_PATH, so change these only if you change those too.
+# local clone. Only REPO_PATH is settled here, because it is what the clone
+# needs; the overlay and skills paths are resolved from lib/paths.sh once the
+# clone exists, which is also what puts them in .env for docker compose. The
+# old REPO_DIR spelling still works.
 REPO_URL="${REPO_URL:-https://github.com/zkrige/zoidberg.git}"
-REPO_DIR="${REPO_DIR:-/opt/zoidberg}"
-CONTENT_DIR="${CONTENT_DIR:-/opt/zoidberg-config}"
-SKILLS_DIR="${SKILLS_DIR:-/opt/claude-skills}"
+if [ -z "${REPO_PATH:-}" ] && [ -n "${REPO_DIR:-}" ]; then
+  warn "REPO_DIR is the old name for REPO_PATH; using REPO_DIR=${REPO_DIR}"
+fi
+REPO_PATH="${REPO_PATH:-${REPO_DIR:-/opt/zoidberg}}"
 
 usage() {
   cat <<EOF
@@ -60,29 +63,35 @@ What it does:
      installs silently, never forces), using apt-get on Linux and Homebrew on
      macOS. Reads prompts from /dev/tty so it can still ask when piped; exits
      non-zero if there is no terminal at all.
-  3. Clones the framework to ${REPO_DIR} (leaves it alone if already present).
-  4. Seeds a content overlay at ${CONTENT_DIR} from examples/content/ (leaves
-     it alone if already present).
-  5. Creates ${SKILLS_DIR} and the config/ + skills/ mount points inside the
-     repo directory.
+  3. Clones the framework to ${REPO_PATH} (leaves it alone if already present).
+  4. Seeds a content overlay beside it from examples/content/ (leaves it alone
+     if already present).
+  5. Creates the skills directory and the config/ + skills/ mount points
+     inside the repo directory.
   6. Generates a random WhatsApp bridge API key into secrets.json if unset.
   7. Ensures .features in the seeded config.json is {telegram: true, whatsapp: false}.
-  8. chowns the three directories to uid:gid 1000:1000 (the container's
+  8. Writes .env with the three host paths, so docker compose, host cron and a
+     hand-run compose command all mount the same directories. Existing values
+     are never changed.
+  9. chowns the three directories to uid:gid 1000:1000 (the container's
      user). Skipped on macOS, where Docker Desktop maps ownership itself.
-  9. Runs ./setup.sh run, which builds and starts the container, takes your
+  10. Runs ./setup.sh run, which builds and starts the container, takes your
      Telegram token, signs Claude in, installs host cron, and verifies.
 
-Everything through step 8 is deterministic and authors no config. Step 9 is
+Everything through step 9 is deterministic and authors no config. Step 10 is
 where the install becomes interactive: it stops for a bot token and for you to
 approve a Claude sign-in URL, and it is resumable if interrupted.
 
 Environment:
-  SKIP_SETUP=1   Stop after step 8. Finish later with:
-                   cd ${REPO_DIR} && ./setup.sh run
+  SKIP_SETUP=1   Stop after step 9. Finish later with:
+                   cd ${REPO_PATH} && ./setup.sh run
   REPO_URL       Clone from a fork instead of the default.
-  REPO_DIR, CONTENT_DIR, SKILLS_DIR
-                 Install to different paths (match docker-compose.yml if you
-                 change them).
+  REPO_PATH, CONTENT_PATH, SKILLS_PATH
+                 Install to different paths. Nothing else needs editing:
+                 they are written to .env and docker compose reads it.
+                 Unset, the overlay and skills default to siblings of
+                 REPO_PATH. The old REPO_DIR/CONTENT_DIR/SKILLS_DIR names
+                 still work and say so when used.
 
 Options:
   --help    Show this message and exit.
@@ -348,37 +357,48 @@ fi
 # ---------------------------------------------------------------------------
 header "Framework repo"
 
-if [ -d "$REPO_DIR/.git" ]; then
-  ok "${REPO_DIR} already present. Leaving it alone."
+if [ -d "$REPO_PATH/.git" ]; then
+  ok "${REPO_PATH} already present. Leaving it alone."
 else
-  info "Cloning ${REPO_URL} to ${REPO_DIR}..."
-  $SUDO mkdir -p "$(dirname "$REPO_DIR")"
-  $SUDO git clone "$REPO_URL" "$REPO_DIR"
-  ok "Cloned to ${REPO_DIR}"
+  info "Cloning ${REPO_URL} to ${REPO_PATH}..."
+  $SUDO mkdir -p "$(dirname "$REPO_PATH")"
+  $SUDO git clone "$REPO_URL" "$REPO_PATH"
+  ok "Cloned to ${REPO_PATH}"
 fi
+
+# The clone is what makes the shared path library reachable, which is why the
+# overlay and skills paths are resolved here and not at the top: this script is
+# routinely run straight off a curl pipe with no repo on disk yet. Resolution
+# order is the environment, then an existing .env, then siblings of the repo.
+# It also validates all three, so a path that would break compose or the
+# crontab stops the install before anything else is created.
+# shellcheck source=SCRIPTDIR/lib/paths.sh
+source "${REPO_PATH}/lib/paths.sh"
+resolve_host_paths || exit 1
+ok "overlay ${CONTENT_PATH}, skills ${SKILLS_PATH}"
 
 # ---------------------------------------------------------------------------
 # 4. Seed the content overlay from examples/content/
 # ---------------------------------------------------------------------------
 header "Content overlay"
 
-EXAMPLES_DIR="${REPO_DIR}/examples/content"
+EXAMPLES_DIR="${REPO_PATH}/examples/content"
 
-if [ -d "$CONTENT_DIR" ] && [ -n "$(ls -A "$CONTENT_DIR" 2>/dev/null)" ]; then
-  ok "${CONTENT_DIR} already present and non-empty. Leaving it alone."
+if [ -d "$CONTENT_PATH" ] && [ -n "$(ls -A "$CONTENT_PATH" 2>/dev/null)" ]; then
+  ok "${CONTENT_PATH} already present and non-empty. Leaving it alone."
 else
   if [ ! -d "$EXAMPLES_DIR" ]; then
     err "examples/content/ not found at ${EXAMPLES_DIR}. Cannot seed overlay."
     exit 1
   fi
-  info "Seeding ${CONTENT_DIR} from examples/content/..."
-  $SUDO mkdir -p "$CONTENT_DIR/agents" "$CONTENT_DIR/scripts"
-  $SUDO cp "$EXAMPLES_DIR/config.example.json" "$CONTENT_DIR/config.json"
-  $SUDO cp "$EXAMPLES_DIR/secrets.example.json" "$CONTENT_DIR/secrets.json"
-  $SUDO cp "$EXAMPLES_DIR/schedule.json" "$CONTENT_DIR/schedule.json"
-  $SUDO cp "$EXAMPLES_DIR/agents/"*.txt "$CONTENT_DIR/agents/"
-  $SUDO cp "$EXAMPLES_DIR/scripts/"* "$CONTENT_DIR/scripts/"
-  ok "Seeded ${CONTENT_DIR}"
+  info "Seeding ${CONTENT_PATH} from examples/content/..."
+  $SUDO mkdir -p "$CONTENT_PATH/agents" "$CONTENT_PATH/scripts"
+  $SUDO cp "$EXAMPLES_DIR/config.example.json" "$CONTENT_PATH/config.json"
+  $SUDO cp "$EXAMPLES_DIR/secrets.example.json" "$CONTENT_PATH/secrets.json"
+  $SUDO cp "$EXAMPLES_DIR/schedule.json" "$CONTENT_PATH/schedule.json"
+  $SUDO cp "$EXAMPLES_DIR/agents/"*.txt "$CONTENT_PATH/agents/"
+  $SUDO cp "$EXAMPLES_DIR/scripts/"* "$CONTENT_PATH/scripts/"
+  ok "Seeded ${CONTENT_PATH}"
 fi
 
 # ---------------------------------------------------------------------------
@@ -386,18 +406,18 @@ fi
 # ---------------------------------------------------------------------------
 header "Directories"
 
-$SUDO mkdir -p "$SKILLS_DIR"
-ok "${SKILLS_DIR}: present"
+$SUDO mkdir -p "$SKILLS_PATH"
+ok "${SKILLS_PATH}: present"
 
-$SUDO mkdir -p "${REPO_DIR}/config" "${REPO_DIR}/skills"
-ok "${REPO_DIR}/config and ${REPO_DIR}/skills mount points: present"
+$SUDO mkdir -p "${REPO_PATH}/config" "${REPO_PATH}/skills"
+ok "${REPO_PATH}/config and ${REPO_PATH}/skills mount points: present"
 
 # ---------------------------------------------------------------------------
 # 6. Generate the WhatsApp bridge API key if unset
 # ---------------------------------------------------------------------------
 header "Bridge API key"
 
-SECRETS_FILE="${CONTENT_DIR}/secrets.json"
+SECRETS_FILE="${CONTENT_PATH}/secrets.json"
 CURRENT_KEY="$($SUDO jq -r '.whatsapp.bridge_api_key // empty' "$SECRETS_FILE" 2>/dev/null || true)"
 
 if [ -n "$CURRENT_KEY" ]; then
@@ -421,7 +441,7 @@ ok "secrets.json permissions set to 600"
 # ---------------------------------------------------------------------------
 header "Feature flags"
 
-CONFIG_FILE="${CONTENT_DIR}/config.json"
+CONFIG_FILE="${CONTENT_PATH}/config.json"
 CURRENT_FEATURES="$($SUDO jq -r 'if has("features") then "present" else "absent" end' "$CONFIG_FILE")"
 
 if [ "$CURRENT_FEATURES" = "present" ]; then
@@ -434,7 +454,20 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 8. Ownership - the container runs as uid:gid 1000:1000
+# 8. Host paths into .env, which docker compose reads for its mount sources
+#
+# Before the ownership step, because on Linux the clone is still root-owned
+# here and the write needs $SUDO. The same writer runs from setup.sh, so a
+# hand clone and an install that predates this end up with the same file.
+# ---------------------------------------------------------------------------
+header "Host paths"
+
+# shellcheck disable=SC2034  # read by env_file_write in lib/paths.sh
+ENV_SUDO="$SUDO"
+env_write_defaults
+
+# ---------------------------------------------------------------------------
+# 9. Ownership - the container runs as uid:gid 1000:1000
 # ---------------------------------------------------------------------------
 header "Ownership"
 
@@ -444,11 +477,11 @@ header "Ownership"
 # created with sudo, so they belong to root. Left that way the operator needs
 # sudo to edit their own schedule.json. Hand them back.
 if [ "$PLATFORM" = macos ]; then
-  if $SUDO chown -R "$(id -u):$(id -g)" "$REPO_DIR" "$CONTENT_DIR" "$SKILLS_DIR" 2>/dev/null; then
+  if $SUDO chown -R "$(id -u):$(id -g)" "$REPO_PATH" "$CONTENT_PATH" "$SKILLS_PATH" 2>/dev/null; then
     ok "ownership given to $(id -un) (Docker Desktop maps uids into the container)"
   else
     warn "could not set ownership on every file; you may need sudo to edit"
-    warn "your content overlay at ${CONTENT_DIR}"
+    warn "your content overlay at ${CONTENT_PATH}"
   fi
   $SUDO chmod 600 "$SECRETS_FILE" 2>/dev/null || true
 else
@@ -457,11 +490,11 @@ else
   # its very last step, after every real change has already succeeded, leaving
   # the user with an error and no idea what to do next. Ownership is a
   # convenience so the container's uid 1000 can write; warn and carry on.
-  if $SUDO chown -R 1000:1000 "$REPO_DIR" "$CONTENT_DIR" "$SKILLS_DIR" 2>/dev/null; then
-    ok "chown -R 1000:1000 applied to ${REPO_DIR}, ${CONTENT_DIR}, ${SKILLS_DIR}"
+  if $SUDO chown -R 1000:1000 "$REPO_PATH" "$CONTENT_PATH" "$SKILLS_PATH" 2>/dev/null; then
+    ok "chown -R 1000:1000 applied to ${REPO_PATH}, ${CONTENT_PATH}, ${SKILLS_PATH}"
   else
     warn "could not set ownership on every file (harmless unless the container"
-    warn "cannot write; fix with: chown -R 1000:1000 ${REPO_DIR} ${CONTENT_DIR})"
+    warn "cannot write; fix with: chown -R 1000:1000 ${REPO_PATH} ${CONTENT_PATH})"
   fi
 
   # That chown is what makes git refuse to touch these repos afterwards: the
@@ -469,7 +502,7 @@ else
   # aborts with "detected dubious ownership". The deploy loop then fails every
   # five minutes on a brand new install, logging to a file nobody reads. Declare
   # the three directories safe for whoever is about to own the crontab.
-  for d in "$REPO_DIR" "$CONTENT_DIR" "$SKILLS_DIR"; do
+  for d in "$REPO_PATH" "$CONTENT_PATH" "$SKILLS_PATH"; do
     git config --global --get-all safe.directory 2>/dev/null | grep -qx "$d" \
       || git config --global --add safe.directory "$d" 2>/dev/null || true
   done
@@ -492,7 +525,7 @@ ${C_BOLD}Stopping here because SKIP_SETUP=1. Nothing is running yet.${C_RESET}
 
 Finish whenever you like:
 
-  ${C_GREEN}cd ${REPO_DIR} && ./setup.sh run${C_RESET}
+  ${C_GREEN}cd ${REPO_PATH} && ./setup.sh run${C_RESET}
 
 EOF
   exit 0
@@ -506,7 +539,7 @@ ${C_BOLD}Filesystem is ready, but nothing is running yet.${C_RESET}
 The rest needs to ask you for a Telegram token and a sign-in code, and there
 is no terminal attached here. Run this from a terminal to finish:
 
-  ${C_GREEN}cd ${REPO_DIR} && ./setup.sh run${C_RESET}
+  ${C_GREEN}cd ${REPO_PATH} && ./setup.sh run${C_RESET}
 
 EOF
   exit 0
@@ -514,13 +547,13 @@ fi
 
 cat <<EOF
 
-Prerequisites are in place and the framework is at ${REPO_DIR}.
+Prerequisites are in place and the framework is at ${REPO_PATH}.
 Starting setup. It stops for you twice: once for a Telegram bot token, once to
 approve a Claude sign-in URL. Safe to re-run if anything is interrupted.
 
 EOF
 
-cd "$REPO_DIR"
+cd "$REPO_PATH"
 # setup.sh prompts for a bot token and a sign-in code. Point its stdin at the
 # terminal: this script's stdin may be the pipe it was read from, which would
 # feed setup.sh leftover script text instead of the operator's answers. Safe

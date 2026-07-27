@@ -19,9 +19,10 @@ This applies to all automated and interactive sessions.
 
 ## Repo location
 Clone this framework repo wherever you develop. In production the repo is
-bind-mounted at `/app` inside the Docker container on the Linux host (default
-host path `/opt/zoidberg`, configurable via the `REPO_PATH` compose
-variable).
+bind-mounted at `/app` inside the Docker container on the Linux host. The host
+path is not fixed: `install.sh` clones to `/opt/zoidberg` by default and writes
+the real paths to `.env`, which docker compose reads. Nothing has to be edited
+to install somewhere else (see Deployment).
 
 ## Architecture
 
@@ -142,8 +143,10 @@ comes from the session's own turns, not a re-pasted transcript.
 - `watchers/plugins/autoupdate.sh` - in-container pull-only backstop
 - `lib/channels/bot-channel/server.ts` - bot-channel MCP server (event in, `reply` tool out)
 - `lib/common.sh` - shared utilities (JSON parsing, project matching, logging, notify)
+- `lib/paths.sh` - host-side path resolution and the `.env` reader/writer, shared by `install.sh`, `setup.sh` and `scripts/self-update.sh`
 - `lib/telegram-*.sh` - Telegram plugin helpers: `-api` (Bot API), `-commands`, `-md` (markdown), `-process`, `-queue`, `-run` (dispatch/stream), `-session` (sessions/history/prompt-sections)
 - `lib/whatsapp-dispatch.sh` - WhatsApp triage dispatcher (called by the webhook listener)
+- `lib/claude-login.sh` - Claude OAuth sign-in (tmux pane, URL scrape, bounded polls), shared by `setup.sh` and the Telegram `/login` handler
 - `lib/evolution.sh` - self-evolve agent (detects failures, improves prompts)
 - `agents/guardrails.txt` - non-negotiable guardrails (framework prompt, session system prompt)
 - `agents/telegram-system.txt` - Telegram operating instructions (framework prompt, session system prompt)
@@ -162,6 +165,8 @@ comes from the session's own turns, not a re-pasted transcript.
 - `scripts/scheduled-restart.sh` - host-cron daily container restart (resets session context)
 - `docker/entrypoint.sh` - container startup (auth check, git config, `exec scheduler.sh`)
 - `install.sh` - one-command bootstrap: prerequisites, clone, content overlay, then `setup.sh run`
+- `setup.sh` - deterministic setup dispatcher: usage text, output helpers, path resolution, `json_write`, `ask`, and the subcommand `case`
+- `lib/setup-*.sh` - the subcommands themselves, sourced by `setup.sh`: `-telegram` (token, chat-id discovery, installer messages), `-config` (`feature`, `identity`, `env`, `status`), `-login` (Claude sign-in), `-cron` (host cron entries), `-verify` (end-to-end check), `-run` (the install sequence)
 
 ## Scheduled tasks
 `config/schedule.json` is the source of truth; the task whitelist is derived
@@ -177,14 +182,37 @@ jq -r '.tasks[] | "\(.name)\t\(.cron)\tenabled=\(.enabled)"' config/schedule.jso
 
 ## Deployment
 Production is a Docker container (`zoidberg`, scheduler = PID 1) on a Linux
-host. The repo is bind-mounted `${REPO_PATH:-/opt/zoidberg}` → `/app`;
-the skills repo `${SKILLS_PATH:-/opt/claude-skills}` → the container's skills
-dir; the content repo `${CONTENT_PATH:-/opt/zoidberg-config}` → `/app/config`
+host. The repo is bind-mounted `${REPO_PATH:-.}` → `/app`; the skills repo
+`${SKILLS_PATH:-../claude-skills}` → the container's skills dir; the content
+repo `${CONTENT_PATH:-../zoidberg-config}` → `/app/config`
 (`docker-compose.yml`), with `CONTENT_DIR=/app/config` set in the container
 environment. `config/` joins `skills/` as a bind-mounted repo - same pattern,
 separate repo. `docker/entrypoint.sh` reads git identity
 (`.git.user_name`/`.git.user_email`) from `/app/config/config.json`, and
 chowns `/app/config/secrets.json` (the bind-mount may land root-owned).
+
+### Host paths and `.env`
+Compose's relative defaults resolve against the compose file's directory, so
+out of the box the mounts are "this repo, plus its two sibling repos". The real
+paths are pinned in `.env` at the repo root, written by `env_write_defaults`
+(`lib/paths.sh`) from `install.sh` and `setup.sh env`. It holds `REPO_PATH`,
+`CONTENT_PATH`, `SKILLS_PATH`, `COMPOSE_PROJECT_NAME=zoidberg` (unpinned, the
+project name would come from the directory basename and namespace the
+`claude-home` and `wa-bridge-store` named volumes) and a detected
+`SSH_KEY_PATH`. The writer only ever ADDS missing keys; an existing value is
+never rewritten.
+
+Host-side names are `*_PATH`; `*_DIR` is the in-container spelling and a
+different thing. `REPO_DIR`/`CONTENT_DIR`/`SKILLS_DIR` still work as host-side
+input and warn when they are what supplied the value. `install.sh`, `setup.sh`
+and `scripts/self-update.sh` all resolve through `resolve_host_paths`, which
+reads `.env` by parsing it (never `source`, which would execute it) and sets
+only variables that are not already set. `setup.sh verify` asserts every mount
+SOURCE against the resolved paths, so a compose fallback shows up as one line
+instead of a mystery.
+
+Installing elsewhere is `REPO_PATH=~/zoidberg ./install.sh`; the overlay and
+skills default to siblings of it, and no file needs editing.
 
 WhatsApp support is an opt-in build: the Go bridge toolchain, gcc, and the
 `docker/whatsapp-bridge-src/`/`docker/whatsapp-mcp-server/` sources are only

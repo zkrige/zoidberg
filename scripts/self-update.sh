@@ -1,14 +1,17 @@
 #!/bin/bash
 set -e
 
-# Paths are derived, not hardcoded: install.sh documents REPO_DIR/CONTENT_DIR/
-# SKILLS_DIR as overridable, and setup.sh writes this script's real location
+# Paths are derived, not hardcoded: setup.sh writes this script's real location
 # into cron, so pinning /opt here silently broke the deploy loop for anyone who
-# installed elsewhere. This script lives in scripts/, so the repo is its parent;
-# the overlay and skills sit beside the repo unless overridden.
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CONTENT_DIR="${CONTENT_DIR:-$(dirname "$REPO_DIR")/zoidberg-config}"
-SKILLS_DIR="${SKILLS_DIR:-$(dirname "$REPO_DIR")/claude-skills}"
+# installed elsewhere. This script lives in scripts/, so the repo is its parent.
+#
+# resolve_host_paths also EXPORTS the three, which is the other half of the
+# same bug: the compose rebuild below ran with none of the *_PATH names set, so
+# a relocated install reverted to the built-in mounts on the next deploy.
+REPO_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=SCRIPTDIR/../lib/paths.sh
+source "${REPO_PATH}/lib/paths.sh"
+resolve_host_paths
 
 # chown to the container's uid is a Linux concern. On macOS the directories
 # belong to the operator and Docker Desktop maps uids into the container, so
@@ -19,14 +22,14 @@ maybe_chown() {
 }
 
 # --- Automations repo (bind-mounted into container, code changes are live) ---
-cd "$REPO_DIR"
+cd "$REPO_PATH"
 
 # Mount points for the overlay bind mounts (/app/config, /app/skills). They live
 # inside the repo directory but are not tracked, so a git operation or a fresh
 # clone can leave them missing. Removing them under a running container breaks
 # the nested mounts, so ensure they exist before any compose action below.
-mkdir -p "$REPO_DIR/config" "$REPO_DIR/skills"
-maybe_chown 1000:1000 "$REPO_DIR/config" "$REPO_DIR/skills"
+mkdir -p "$REPO_PATH/config" "$REPO_PATH/skills"
+maybe_chown 1000:1000 "$REPO_PATH/config" "$REPO_PATH/skills"
 
 git fetch origin main --quiet
 LOCAL=$(git rev-parse HEAD)
@@ -62,13 +65,13 @@ if [ "$LOCAL" != "$REMOTE" ]; then
     echo "[self-update] code-only change (no scheduler reload needed)"
   fi
 
-  maybe_chown -R 1000:1000 "$REPO_DIR"
+  maybe_chown -R 1000:1000 "$REPO_PATH"
   echo "[self-update] $(date): automations update complete"
 fi
 
 # --- Skills repo (bind-mounted into container) ---
-if [ -d "$SKILLS_DIR/.git" ]; then
-  cd "$SKILLS_DIR"
+if [ -d "$SKILLS_PATH/.git" ]; then
+  cd "$SKILLS_PATH"
 
   git fetch origin main --quiet
   SKILLS_LOCAL=$(git rev-parse HEAD)
@@ -87,14 +90,14 @@ if [ -d "$SKILLS_DIR/.git" ]; then
     fi
 
     bash setup.sh
-    maybe_chown -R 1000:1000 "$SKILLS_DIR"
+    maybe_chown -R 1000:1000 "$SKILLS_PATH"
     echo "[self-update] $(date): skills sync complete"
   fi
 fi
 
 # --- Content repo (bind-mounted into container) ---
-if [ -d "$CONTENT_DIR/.git" ]; then
-  cd "$CONTENT_DIR"
+if [ -d "$CONTENT_PATH/.git" ]; then
+  cd "$CONTENT_PATH"
 
   git fetch origin main --quiet
   CONTENT_LOCAL=$(git rev-parse HEAD)
@@ -113,7 +116,7 @@ if [ -d "$CONTENT_DIR/.git" ]; then
     fi
 
     [ -f setup.sh ] && bash setup.sh
-    maybe_chown -R 1000:1000 "$CONTENT_DIR"
+    maybe_chown -R 1000:1000 "$CONTENT_PATH"
     echo "[self-update] $(date): content sync complete"
   fi
 fi
