@@ -85,20 +85,41 @@ ask() { # <prompt> ; answer in ASK_REPLY, 1 when there is nobody left to ask
 
 # Write a JSON file atomically, validating before replacing the original. A
 # broken secrets.json fails the container silently, so never leave one behind.
+# install.sh chowns the content overlay to 1000:1000 so the container's user
+# can write it, then hands off to setup.sh as the operator. Any operator whose
+# uid is neither 1000 nor root therefore cannot write their own overlay, and
+# every json_write died on a permission error blamed on jq. Escalate the same
+# way install.sh already does for these exact files.
+sudo_for() { # <path> ; echoes "sudo" when that path needs it, empty otherwise
+  [ -w "$1" ] && return 0
+  [ "$(id -u)" -eq 0 ] && return 0
+  command -v sudo >/dev/null 2>&1 || return 1
+  printf 'sudo'
+}
+
+# Write a JSON file atomically, validating before replacing the original. A
+# broken secrets.json fails the container silently, so never leave one behind.
 json_write() { # <file> [jq args...] <jq-filter>
   local file="$1"; shift
-  # The temp file lands beside the original, so this needs the DIRECTORY
-  # writable, not just the file. install.sh chowns the content overlay to
-  # 1000:1000, which locks out any operator whose uid is neither that nor
-  # root, and the redirect below would then blame jq for a permission error.
-  local dir; dir="$(dirname "$file")"
-  [ -w "$dir" ] || { err "${dir} is not writable by $(id -un) (uid $(id -u))"; return 1; }
+  local dir sudo; dir="$(dirname "$file")"
+  sudo="$(sudo_for "$dir")" \
+    || { err "${dir} is not writable by $(id -un) (uid $(id -u)) and sudo is not installed"; return 1; }
   local tmp="${file}.tmp.$$"
-  if ! jq "$@" > "$tmp" < "$file"; then err "jq failed writing ${file}"; rm -f "$tmp"; return 1; fi
-  if ! jq -e . "$tmp" >/dev/null 2>&1; then err "refusing to write invalid JSON to ${file}"; rm -f "$tmp"; return 1; fi
-  local mode; mode="$(stat -c '%a' "$file" 2>/dev/null || stat -f '%A' "$file" 2>/dev/null || echo 600)"
-  mv "$tmp" "$file"
-  chmod "$mode" "$file"
+  if ! $sudo jq "$@" "$file" | $sudo tee "$tmp" >/dev/null; then
+    err "jq failed writing ${file}"; $sudo rm -f "$tmp"; return 1
+  fi
+  if ! $sudo jq -e . "$tmp" >/dev/null 2>&1; then
+    err "refusing to write invalid JSON to ${file}"; $sudo rm -f "$tmp"; return 1
+  fi
+  # Both are read BEFORE the replace. Ownership matters as much as mode here:
+  # a sudo write would otherwise hand the overlay to root, and the container
+  # runs as uid 1000, so the next write from inside would fail instead.
+  local mode owner
+  mode="$(stat -c '%a' "$file" 2>/dev/null || stat -f '%A' "$file" 2>/dev/null || echo 600)"
+  owner="$(stat -c '%u:%g' "$file" 2>/dev/null || stat -f '%u:%g' "$file" 2>/dev/null || echo '')"
+  $sudo mv "$tmp" "$file"
+  $sudo chmod "$mode" "$file"
+  if [ -n "$sudo" ] && [ -n "$owner" ]; then $sudo chown "$owner" "$file"; fi
 }
 
 require_files() {
