@@ -390,9 +390,23 @@ claude_session_apply_pending_model() {
 # request is exempt - it's the one calling this).
 # ---------------------------------------------------------------------------
 _claude_session_dispatch_outstanding() {
-  local f
+  local f now age mtime
+  now=$(date +%s)
   for f in "${STATE_DIR}"/.*.inflight; do
-    [ -f "$f" ] && return 0
+    [ -f "$f" ] || continue
+    # A dispatcher that dies mid-run leaks its lock: the subshell holding it
+    # never reaches the rm. cron.sh:136 already writes such a lock off past
+    # INFLIGHT_STALE and re-dispatches, so honouring it here forever means one
+    # leaked file blocks every context reset from then on. Observed 2026-07-28:
+    # .bitbucket-pr.inflight leaked at 19:15 and the session ran 16 hours to
+    # 195k tokens against a 120k threshold, deferring on every single tick.
+    # GNU stat then BSD stat. If neither can read the mtime, treat the lock as
+    # live: guessing "stale" here wipes a session mid-dispatch, which is the
+    # failure this whole function exists to prevent.
+    mtime="$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo "")"
+    [[ "$mtime" =~ ^[0-9]+$ ]] || return 0
+    age=$(( now - mtime ))
+    [ "$age" -lt "${INFLIGHT_STALE:-1800}" ] && return 0
   done
   [ -e "${BUSY_LOCK:-/tmp/claude-telegram.busy}" ] && return 0
   [ -e "/tmp/claude-whatsapp-busy" ] && return 0
