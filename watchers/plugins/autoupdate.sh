@@ -33,6 +33,20 @@ autoupdate_heal_perms() {
   fi
 }
 
+# Classify a changed-file list the same way scripts/self-update.sh does. The
+# two must agree: a file that means "rebuild" on the host cannot mean "reload"
+# in here. Order matters, build wins over code.
+_autoupdate_change_class() { # <newline-separated paths> -> build|code|content
+  local changed="$1"
+  if printf '%s\n' "$changed" | grep -qE '^(Dockerfile|docker/|docker-compose\.yml)'; then
+    printf 'build'
+  elif printf '%s\n' "$changed" | grep -qE '^(watchers/|lib/.*\.sh)'; then
+    printf 'code'
+  else
+    printf 'content'
+  fi
+}
+
 autoupdate_tick() {
   local now
   now=$(date +%s)
@@ -63,12 +77,34 @@ autoupdate_tick() {
     return
   fi
 
+  # scripts/self-update.sh decides rebuild vs reload by comparing HEAD to
+  # origin/main. Pulling here makes those equal, so it finds nothing to do and
+  # whatever this pull needed never happens: an image change is never built, a
+  # scheduler change lands on disk while the running process keeps executing
+  # the code it sourced at boot. Classify BEFORE pulling and act on it.
+  local class
+  class="$(_autoupdate_change_class "$(git -C "$REPO_DIR" diff --name-only HEAD origin/main 2>/dev/null)")"
+
+  # A rebuild needs the docker CLI and the daemon socket. This container has
+  # neither, so do not swallow the update: leave HEAD behind and let the host
+  # deploy loop take it.
+  if [ "$class" = build ]; then
+    log "autoupdate: ${behind} commits change build files, leaving them to the host deploy loop"
+    return
+  fi
+
   local pull_output pull_exit
   pull_output=$(git -C "$REPO_DIR" pull --rebase origin main 2>&1)
   pull_exit=$?
 
   if [ $pull_exit -eq 0 ]; then
     log "autoupdate: updated (${behind} commits) - ${pull_output}"
+    # PID 1 is the scheduler, which re-execs on SIGHUP and re-sources every
+    # plugin. Same signal the host loop and /reload send.
+    if [ "$class" = code ]; then
+      log "autoupdate: scheduler code changed, reloading"
+      kill -HUP 1
+    fi
     # If auto-push raced a remote update its push was rejected; the commit
     # survived and was just rebased, so flush it now.
     if [ "$ahead" != "0" ]; then

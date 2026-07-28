@@ -20,7 +20,7 @@ localhost MCP channel, and it replies by calling a `reply` tool.
 | Scheduler orchestrator | `watchers/scheduler.sh` | Singleton lock, plugin discovery/gating, lifecycle dispatch, SIGHUP reload, wake detection, hourly log rotation, main loop |
 | Core plugin: session/transport | `watchers/plugins/claude_session.sh` | Owns the tmux session, the bot-channel POST/wait helpers, session health probing, context-size-based `/clear`, model switching |
 | Core plugin: cron engine | `watchers/plugins/cron.sh` | Cron-expression matching, `pre_check` gates, dispatch of `command` and `prompt_file` tasks |
-| Core plugin: autoupdate | `watchers/plugins/autoupdate.sh` | In-container `git fetch`/`pull --rebase` backstop, auto-push of bot-authored commits, ownership-drift healing |
+| Core plugin: autoupdate | `watchers/plugins/autoupdate.sh` | In-container `git fetch`/`pull --rebase` backstop, auto-push of bot-authored commits, ownership-drift healing, reload-or-defer on the pulled range |
 | Optional plugin: Telegram | `watchers/plugins/telegram.sh` (+ `lib/telegram-*.sh`) | Long-polls the Bot API, queues/streams messages, implements `/`-commands |
 | Optional plugin: WhatsApp | `watchers/plugins/whatsapp.sh` (+ `lib/whatsapp-dispatch.sh`) | Webhook listener, instant self-chat triage dispatch |
 | Bot-channel MCP transport | `lib/channels/bot-channel/server.ts` | HTTP listener on `127.0.0.1:8790`; forwards events into the live session as an MCP notification; exposes the `reply` tool |

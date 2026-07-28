@@ -36,7 +36,7 @@ Plugins (`watchers/plugins/`):
 - `telegram.sh` - long-polls Telegram, queues messages, handles commands, streams responses.
 - `cron.sh` - matches cron expressions, evaluates `pre_check` gates, dispatches scheduled tasks.
 - `whatsapp.sh` - webhook listener; dispatches `whatsapp-triage` when a self-chat message arrives.
-- `autoupdate.sh` - in-container pull-only safety net (the real deploy is the host `scripts/self-update.sh`, see Deployment).
+- `autoupdate.sh` - in-container backstop: pulls, self-reloads on scheduler-code changes, defers build changes to the host `scripts/self-update.sh` (see Deployment).
 
 ### Framework and content split
 This repo (the framework) ships only generic scheduling/transport code and a
@@ -140,7 +140,7 @@ comes from the session's own turns, not a re-pasted transcript.
 - `watchers/plugins/telegram.sh` - Telegram bot plugin (polling, queue, streaming, commands)
 - `watchers/plugins/cron.sh` - cron engine (schedule matching, pre_check gates, dispatch)
 - `watchers/plugins/whatsapp.sh` - WhatsApp webhook plugin (instant dispatch on self-chat)
-- `watchers/plugins/autoupdate.sh` - in-container pull-only backstop
+- `watchers/plugins/autoupdate.sh` - in-container backstop (pull, classify, SIGHUP or defer)
 - `lib/channels/bot-channel/server.ts` - bot-channel MCP server (event in, `reply` tool out)
 - `lib/common.sh` - shared utilities (JSON parsing, project matching, logging, notify)
 - `lib/paths.sh` - host-side path resolution and the `.env` reader/writer, shared by `install.sh`, `setup.sh` and `scripts/self-update.sh`
@@ -231,7 +231,17 @@ Deploy is git-driven via a host cron every 5 minutes (`scripts/self-update.sh`):
 
 So a `git push` to `main` is the entire deploy - the host applies it within 5
 minutes. The bot also auto-pushes its own changes; `autoupdate.sh` is an
-in-container pull-only backstop, not the primary mechanism.
+in-container backstop, not the primary mechanism.
+
+The two race, and the host loop loses: it gates its whole rebuild-or-reload
+decision on `HEAD != origin/main`, so a commit `autoupdate.sh` pulled first
+leaves it with nothing to do. `autoupdate.sh` therefore classifies the incoming
+range with the same two patterns (`_autoupdate_change_class`) and acts on it:
+build changes are NOT pulled at all (no docker CLI or socket in the container)
+so the host loop still sees them, `watchers/`/`lib/*.sh` changes are pulled and
+followed by `kill -HUP 1`, and everything else is pulled and left alone. The
+patterns must stay identical to the host's; `tests/autoupdate_class.sh` asserts
+the classification.
 
 `scripts/scheduled-restart.sh` (host cron, daily) restarts the container to reset the
 interactive session's accumulated context.
