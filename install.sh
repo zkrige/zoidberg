@@ -418,16 +418,31 @@ ok "${REPO_PATH}/config and ${REPO_PATH}/skills mount points: present"
 header "Bridge API key"
 
 SECRETS_FILE="${CONTENT_PATH}/secrets.json"
+
+# jq's own parse error is the only thing the operator would otherwise see, and
+# set -e kills the install right after it, leaving a stray secrets.json.tmp and
+# no clue what to do. Say which file is broken before touching anything.
+if ! $SUDO jq -e . "$SECRETS_FILE" >/dev/null 2>&1; then
+  err "${SECRETS_FILE} is missing or is not valid JSON"
+  info "Fix or delete it, then re-run this script. A template is in examples/content/."
+  exit 1
+fi
+
 CURRENT_KEY="$($SUDO jq -r '.whatsapp.bridge_api_key // empty' "$SECRETS_FILE" 2>/dev/null || true)"
 
 if [ -n "$CURRENT_KEY" ]; then
   ok "whatsapp.bridge_api_key already set. Leaving it alone."
 else
   NEW_KEY="$(openssl rand -hex 32)"
-  $SUDO jq --arg key "$NEW_KEY" '.whatsapp = ((.whatsapp // {}) + {"bridge_api_key": $key})' \
-    "$SECRETS_FILE" | $SUDO tee "${SECRETS_FILE}.tmp" >/dev/null
-  $SUDO mv "${SECRETS_FILE}.tmp" "$SECRETS_FILE"
-  ok "Generated a random bridge API key into secrets.json"
+  if $SUDO jq --arg key "$NEW_KEY" '.whatsapp = ((.whatsapp // {}) + {"bridge_api_key": $key})' \
+       "$SECRETS_FILE" | $SUDO tee "${SECRETS_FILE}.tmp" >/dev/null; then
+    $SUDO mv "${SECRETS_FILE}.tmp" "$SECRETS_FILE"
+    ok "Generated a random bridge API key into secrets.json"
+  else
+    $SUDO rm -f "${SECRETS_FILE}.tmp"
+    err "could not write ${SECRETS_FILE}"
+    exit 1
+  fi
 fi
 
 # secrets.json holds the Telegram bot token and any backup credentials. tee

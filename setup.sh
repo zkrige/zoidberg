@@ -85,8 +85,14 @@ ask() { # <prompt> ; answer in ASK_REPLY, 1 when there is nobody left to ask
 
 # Write a JSON file atomically, validating before replacing the original. A
 # broken secrets.json fails the container silently, so never leave one behind.
-json_write() { # <file> <jq-filter> [jq args...]
+json_write() { # <file> [jq args...] <jq-filter>
   local file="$1"; shift
+  # The temp file lands beside the original, so this needs the DIRECTORY
+  # writable, not just the file. install.sh chowns the content overlay to
+  # 1000:1000, which locks out any operator whose uid is neither that nor
+  # root, and the redirect below would then blame jq for a permission error.
+  local dir; dir="$(dirname "$file")"
+  [ -w "$dir" ] || { err "${dir} is not writable by $(id -un) (uid $(id -u))"; return 1; }
   local tmp="${file}.tmp.$$"
   if ! jq "$@" > "$tmp" < "$file"; then err "jq failed writing ${file}"; rm -f "$tmp"; return 1; fi
   if ! jq -e . "$tmp" >/dev/null 2>&1; then err "refusing to write invalid JSON to ${file}"; rm -f "$tmp"; return 1; fi
