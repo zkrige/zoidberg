@@ -295,19 +295,6 @@ bot_channel_request() {
 }
 
 # ---------------------------------------------------------------------------
-# claude_session_context_tokens - current context size of the live session,
-# read from the newest transcript's last usage record. Echoes an integer.
-# ---------------------------------------------------------------------------
-claude_session_context_tokens() {
-  local f
-  f=$(ls -t "${CLAUDE_PROJECT_TRANSCRIPT_DIR}"/*.jsonl 2>/dev/null | head -1)
-  [ -n "$f" ] || { echo 0; return; }
-  tail -n 200 "$f" 2>/dev/null \
-    | jq -r 'select(.message.usage) | (.message.usage | (.input_tokens//0)+(.cache_read_input_tokens//0)+(.cache_creation_input_tokens//0))' 2>/dev/null \
-    | tail -1
-}
-
-# ---------------------------------------------------------------------------
 # claude_session_is_busy - true if the session is mid-turn (running a task).
 # The TUI footer shows "esc to interrupt" only while a turn is in flight, and
 # the footer is always the bottom line of the pane.
@@ -320,7 +307,7 @@ claude_session_context_tokens() {
 # starved the telegram idle-fallback in lib/telegram-run.sh - its idle_streak
 # never reached 2, so neither the reply-nudge nor the transcript salvage could
 # fire - and the dispatch hung for the full CLAUDE_WALL_TIMEOUT. It also pinned
-# claude_session_maybe_clear and claude_session_apply_pending_model off.
+# claude_session_apply_pending_model off.
 #
 # Two lines, not one: the last line is the footer and the line above it is the
 # input box's border rule, so the window can never reach conversation content.
@@ -372,72 +359,6 @@ claude_session_apply_pending_model() {
   rm -f "$marker"
   log "claude-session: applying deferred model switch, relaunching"
   claude_session_spawn
-}
-
-# ---------------------------------------------------------------------------
-# _claude_session_dispatch_outstanding - true if some dispatcher is still
-# waiting on a reply the session owes it. claude_session_is_busy only scrapes
-# the pane footer ("esc to interrupt"), which reads idle the moment a turn
-# backgrounds a long-running command (run_in_background) and returns text
-# saying it'll report back later - the assistant has NOT called reply() yet,
-# but the pane looks idle in that gap. Root-caused 2026-07-23: torrent-fix
-# backgrounded a Sonarr SeasonSearch poll, the turn ended with "I'll wait...
-# and report back", the pane read idle 20s later, and /clear wiped the
-# session before the background task finished and before reply() was ever
-# called - the cron dispatch then hung until its full wall_timeout (1800s).
-# Checks every outstanding-dispatch signal in the codebase: cron's per-task
-# inflight locks, and the telegram/whatsapp/evolve busy locks (evolve's own
-# request is exempt - it's the one calling this).
-# ---------------------------------------------------------------------------
-_claude_session_dispatch_outstanding() {
-  local f now age mtime
-  now=$(date +%s)
-  for f in "${STATE_DIR}"/.*.inflight; do
-    [ -f "$f" ] || continue
-    # A dispatcher that dies mid-run leaks its lock: the subshell holding it
-    # never reaches the rm. cron.sh:136 already writes such a lock off past
-    # INFLIGHT_STALE and re-dispatches, so honouring it here forever means one
-    # leaked file blocks every context reset from then on. Observed 2026-07-28:
-    # .bitbucket-pr.inflight leaked at 19:15 and the session ran 16 hours to
-    # 195k tokens against a 120k threshold, deferring on every single tick.
-    # GNU stat then BSD stat. If neither can read the mtime, treat the lock as
-    # live: guessing "stale" here wipes a session mid-dispatch, which is the
-    # failure this whole function exists to prevent.
-    mtime="$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo "")"
-    [[ "$mtime" =~ ^[0-9]+$ ]] || return 0
-    age=$(( now - mtime ))
-    [ "$age" -lt "${INFLIGHT_STALE:-1800}" ] && return 0
-  done
-  [ -e "${BUSY_LOCK:-/tmp/claude-telegram.busy}" ] && return 0
-  [ -e "/tmp/claude-whatsapp-busy" ] && return 0
-  return 1
-}
-
-# ---------------------------------------------------------------------------
-# claude_session_maybe_clear - reset the shared session's context when it grows
-# past a threshold and the session is idle. Tasks are independent (each reads
-# its own state from files), so a clean slate between them is correct. This
-# caps context well below the server-side long-context rejection that otherwise
-# silently halts every dispatch once the session crosses ~160k tokens.
-# Threshold is configurable via config.json .session.clear_context_tokens.
-# ---------------------------------------------------------------------------
-claude_session_maybe_clear() {
-  local threshold ctx
-  threshold=$(get_config '.session.clear_context_tokens' 2>/dev/null)
-  [[ "$threshold" =~ ^[0-9]+$ ]] || threshold=120000
-  ctx=$(claude_session_context_tokens)
-  [[ "$ctx" =~ ^[0-9]+$ ]] || return 0
-  [ "$ctx" -lt "$threshold" ] && return 0
-  if claude_session_is_busy; then
-    log "claude-session: context ${ctx} >= ${threshold} but session busy, deferring /clear"
-    return 0
-  fi
-  if _claude_session_dispatch_outstanding; then
-    log "claude-session: context ${ctx} >= ${threshold} but a dispatch is still awaiting reply, deferring /clear"
-    return 0
-  fi
-  log "claude-session: context ${ctx} >= ${threshold}, sending /clear"
-  tmux send-keys -t "$CLAUDE_TMUX_SESSION" "/clear" Enter
 }
 
 # ---------------------------------------------------------------------------
@@ -653,7 +574,6 @@ claude_session_tick() {
   fi
   _claude_session_release_interactive_prompt
   claude_session_apply_pending_model
-  claude_session_maybe_clear
   claude_session_check_auth
   claude_session_health_probe
 }

@@ -80,9 +80,12 @@ Claude completes the work and calls the `reply` tool exactly once with that
 `request_id`; the server writes the reply to a file the orchestrator polls.
 
 The session is PERSISTENT: it retains real conversation turns across dispatches.
-Context is reset when it grows past a token threshold (`claude_session_maybe_clear`)
-and by the daily host `scripts/scheduled-restart.sh`, which bounds how far it can
-grow between resets.
+Context is managed by Claude Code's own native automatic compaction on Sonnet
+5's 1M context window (confirmed by live production testing; no manual
+token-threshold clearing is needed). The daily host
+`scripts/scheduled-restart.sh` restart still runs, not to bound context size
+but to fully reset tmux, auth, and session state as a periodic backstop for a
+session with no `CLAUDE_CODE_DISABLE_1M_CONTEXT` cap.
 
 ### Session system prompt and trust model
 Identity is verified by the TRANSPORT, never by message content: the Telegram

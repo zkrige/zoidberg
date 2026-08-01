@@ -18,7 +18,7 @@ localhost MCP channel, and it replies by calling a `reply` tool.
 | Component | File | Responsibility |
 |---|---|---|
 | Scheduler orchestrator | `watchers/scheduler.sh` | Singleton lock, plugin discovery/gating, lifecycle dispatch, SIGHUP reload, wake detection, hourly log rotation, main loop |
-| Core plugin: session/transport | `watchers/plugins/claude_session.sh` | Owns the tmux session, the bot-channel POST/wait helpers, session health probing, context-size-based `/clear`, model switching |
+| Core plugin: session/transport | `watchers/plugins/claude_session.sh` | Owns the tmux session, the bot-channel POST/wait helpers, session health probing, model switching |
 | Core plugin: cron engine | `watchers/plugins/cron.sh` | Cron-expression matching, `pre_check` gates, dispatch of `command` and `prompt_file` tasks |
 | Core plugin: autoupdate | `watchers/plugins/autoupdate.sh` | In-container `git fetch`/`pull --rebase` backstop, auto-push of bot-authored commits, ownership-drift healing, reload-or-defer on the pulled range |
 | Optional plugin: Telegram | `watchers/plugins/telegram.sh` (+ `lib/telegram-*.sh`) | Long-polls the Bot API, queues/streams messages, implements `/`-commands |
@@ -45,8 +45,8 @@ deliberate for one reason: the interactive CLI keeps usage on the Claude
 subscription pool. A per-message `claude -p` invocation would instead be
 billed against Agent SDK API credit. Every other property of the system
 (persistent conversation state, the channel protocol, the reply-file
-round-trip, the context-clearing logic) exists to make one long-lived session
-safely serve many independent callers, in exchange for that billing model.
+round-trip) exists to make one long-lived session safely serve many
+independent callers, in exchange for that billing model.
 
 ### How a plugin dispatches
 
@@ -68,24 +68,22 @@ answered and fail fast instead of blocking out the full timeout
 
 The session is genuinely persistent: it retains real conversation turns
 across dispatches from all sources (Telegram, cron, WhatsApp all share the one
-session). Two things reset it:
-- `claude_session_maybe_clear` (`claude_session.sh:314-331`) sends `/clear`
-  once live context crosses a configurable token threshold
-  (`.session.clear_context_tokens`, default 120000), but only when the session
-  is idle and no dispatcher is still waiting on a reply
-  (`_claude_session_dispatch_outstanding`, lines 296-304) - clearing mid-task
-  would strand an in-flight `reply()` obligation.
-- The host's daily `scripts/scheduled-restart.sh` restarts the whole container,
-  which bounds context growth regardless of what the session has accumulated.
+session). Context is managed by Claude Code's own native automatic
+compaction, not by any code in this repo - the session runs on Sonnet 5's 1M
+context window with no `CLAUDE_CODE_DISABLE_1M_CONTEXT` cap, and auto-compaction
+has run in production for 7+ days with zero credit or hang failures, confirming
+it works fine for this session's tmux/MCP-piped delivery mode.
 
-The session runs on whatever context window its model defaults to. Where that
-default is 1M, the window is metered against usage credits rather than the
-subscription, so a session left to grow into it can exhaust them and then fail
-every dispatch. The three mechanisms above (auto-compaction, the idle context
-reset, the daily restart) exist to keep it from getting there. If dispatches
-start failing with a usage-credit error while the session is otherwise alive,
-that is the cause, and `CLAUDE_CODE_DISABLE_1M_CONTEXT=1` in the container
-environment pins it to the standard window.
+The host's daily `scripts/scheduled-restart.sh` still restarts the whole
+container, but not to bound context growth: it fully resets tmux, auth, and
+session state as a periodic backstop, independent of auto-compaction.
+
+The 1M window is metered against usage credits rather than the subscription,
+so a session left to grow into it can in principle exhaust them and fail every
+dispatch. If dispatches start failing with a usage-credit error while the
+session is otherwise alive, that is the cause, and
+`CLAUDE_CODE_DISABLE_1M_CONTEXT=1` in the container environment pins it to the
+standard window.
 
 A non-blocking health probe (`claude_session_health_probe`,
 `claude_session.sh:433-478`) periodically posts a synthetic channel event and

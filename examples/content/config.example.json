@@ -22,9 +22,6 @@
   "backup": {
     "restic_repository": "s3:s3.amazonaws.com/YOUR_BACKUP_BUCKET"
   },
-  "session": {
-    "clear_context_tokens": 120000
-  },
   "evolution": {
     "cooldown_seconds": 10800
   },

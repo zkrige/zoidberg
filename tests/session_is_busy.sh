@@ -25,9 +25,9 @@ source "${REPO_DIR}/watchers/plugins/claude_session.sh"
 
 # Idle, but conversation content quotes the busy phrase. Footer has no match.
 IDLE_QUOTING_PHRASE='● Memory pruned - removed the stale entry.
-      22  - claude_session_maybe_clear /clear-during-background-task bug: the
-          pane footer read idle within 20s (no "esc to interrupt" between
-          turns), so is_busy missed it and fired /clear.
+      22  - claude_session_is_busy pane-grep bug: content quoting the phrase
+          "esc to interrupt" (not the footer) pinned the session busy
+          forever.
 
 --------------------------------------------------------------------------
 > add it to radarr
