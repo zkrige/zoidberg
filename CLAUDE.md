@@ -165,7 +165,7 @@ comes from the session's own turns, not a re-pasted transcript.
   - `config/scripts/*` - run-scripts (`pre_check`/`command` entries in `schedule.json`)
   - `config/config.example.json`, `config/secrets.example.json` - templates for the two gitignored files above
 - `scripts/self-update.sh` - host-cron git-driven deploy (pull + reload/rebuild + skills + content sync)
-- `scripts/scheduled-restart.sh` - host-cron daily container restart (resets session context)
+- `scripts/scheduled-restart.sh` - host-cron daily container restart (tmux/auth/session hygiene), deferred while a Telegram turn or a cron task is in flight
 - `docker/entrypoint.sh` - container startup (auth check, git config, `exec scheduler.sh`)
 - `install.sh` - one-command bootstrap: prerequisites, clone, content overlay, then `setup.sh run`
 - `setup.sh` - deterministic setup dispatcher: usage text, output helpers, path resolution, `json_write`, `ask`, and the subcommand `case`
@@ -246,8 +246,27 @@ followed by `kill -HUP 1`, and everything else is pulled and left alone. The
 patterns must stay identical to the host's; `tests/autoupdate_class.sh` asserts
 the classification.
 
-`scripts/scheduled-restart.sh` (host cron, daily) restarts the container to reset the
-interactive session's accumulated context.
+`scripts/scheduled-restart.sh` (host cron, daily) restarts the container to
+reset tmux, auth and session state.
+
+It will not land mid-dispatch. Two kinds of marker say a dispatch is open, and
+`state/` is inside the bind-mounted repo so the host reads both directly:
+`lib/telegram-run.sh` writes `state/telegram-in-progress.json` before
+dispatching and removes it when the turn finalizes, and `cron.sh`'s
+`_cron_post` writes `state/.<task>.inflight` per dispatched task (several can
+be open at once) and clears it when the reply lands. While ANY of them is
+present the script polls every `RESTART_WAIT_INTERVAL` (10s) for up to
+`RESTART_WAIT_MAX` (1200s, telegram.sh's and cron.sh's `CLAUDE_WALL_TIMEOUT`);
+if one is still there at the cap it SKIPS the day rather than restarting, and
+logs which turn or task blocked it. A restart on top of a live Telegram turn
+kills the session mid-answer and `_telegram_recover_crash` then replays the raw
+message into a fresh, context-free session; a killed cron dispatch leaves its
+lock behind and loses the run's output. A marker older than
+`RESTART_MARKER_STALE` (1800s, past the wall timeout and the same threshold as
+cron.sh's own `INFLIGHT_STALE`) has leaked and is ignored, so a stuck file
+cannot disable the restart forever. A missing `state/` directory is a
+misconfiguration: the script logs it and exits 1 without restarting.
+`tests/restart_inflight.sh` covers all nine cases.
 
 ### /reload vs /restart
 - `/reload` (`kill -HUP 1`): scheduler re-execs, re-sources plugin code, and respawns the session (cleanup kills it, init relaunches with current args). Applies code already on disk. This is what `scripts/self-update.sh` triggers for `watchers/`/`lib` changes.

@@ -76,7 +76,14 @@ it works fine for this session's tmux/MCP-piped delivery mode.
 
 The host's daily `scripts/scheduled-restart.sh` still restarts the whole
 container, but not to bound context growth: it fully resets tmux, auth, and
-session state as a periodic backstop, independent of auto-compaction.
+session state as a periodic backstop, independent of auto-compaction. It waits
+on every in-flight marker under `state/` - `telegram-in-progress.json` plus
+cron.sh's per-task `.<task>.inflight` locks - for up to 1200s
+(`CLAUDE_WALL_TIMEOUT`, the longest a dispatch can legitimately run), and skips
+the day rather than killing a live turn, whose interrupted message the next
+startup would otherwise replay into a context-free session, or a live cron
+dispatch, which would lose its output and leak its lock. Markers older than
+1800s have leaked and are ignored.
 
 The 1M window is metered against usage credits rather than the subscription,
 so a session left to grow into it can in principle exhaust them and fail every
