@@ -24,7 +24,6 @@ services:
       # docker/entrypoint.sh hardcodes it in the chown and in --store-dir.
       - ${WA_STORE_PATH:-wa-bridge-store}:/opt/whatsapp-bridge-store
       - ${SSH_KEY_PATH:-~/.ssh/id_rsa}:/tmp/host-ssh-key:ro
-      - ${CONTENT_PATH:-../zoidberg-config}/gcloud-adc.json:/app/config/gcloud-adc.json:ro
     dns:
       - 1.1.1.1
       - 8.8.8.8
@@ -32,10 +31,6 @@ services:
       - HOME=/home/claude
       - TERM=xterm-256color
       - CONTENT_DIR=/app/config
-      # Personal GCP OAuth credential (zkrige's own account, not a service
-      # account) mirrored from the host so tools acting on his behalf (e.g.
-      # Crashlytics API) authenticate as him. See config/gcloud-adc.json.
-      - GOOGLE_APPLICATION_CREDENTIALS=/app/config/gcloud-adc.json
       # Bridge API key is read from the content overlay (config/secrets.json) by
       # docker/entrypoint.sh. Set this var in the host env only to override.
       - WHATSAPP_BRIDGE_API_KEY=${WHATSAPP_BRIDGE_API_KEY:-}
