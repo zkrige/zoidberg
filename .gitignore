@@ -45,3 +45,4 @@ skills/
 !/.claude/skills/
 !/.claude/skills/setup/
 !/.claude/skills/setup/SKILL.md
+docker-compose.yml.bak-*
