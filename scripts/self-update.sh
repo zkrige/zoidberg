@@ -58,6 +58,14 @@ if [ "$LOCAL" != "$REMOTE" ]; then
   if printf '%s\n' "$CHANGED" | grep -qE '^(Dockerfile|docker/|docker-compose\.yml)'; then
     echo "[self-update] Dockerfile changed, rebuilding container"
     docker compose up -d --build --force-recreate 2>&1
+    # The build retags :latest onto the new image and leaves the previous one
+    # untagged, so every Dockerfile change orphans a full image. At 2.27GB a
+    # build that is not a rounding error: 34 of them had silently eaten 63GB
+    # of the deploy host's disk before anyone looked. Dangling only, never -a,
+    # which would also delete tagged images whose containers happen to be
+    # stopped. Non-fatal: a prune failure must not fail an otherwise good
+    # deploy, and set -e is in force.
+    docker image prune -f 2>&1 || echo "[self-update] WARN: image prune failed"
   elif printf '%s\n' "$CHANGED" | grep -qE '^(watchers/|lib/.*\.sh)'; then
     echo "[self-update] scheduler code changed, reloading via SIGHUP"
     docker kill --signal=HUP zoidberg 2>&1 || true

@@ -227,7 +227,7 @@ registration steps are no-ops when the binary/directory are absent.
 
 Deploy is git-driven via a host cron every 5 minutes (`scripts/self-update.sh`):
 1. `git fetch`; if behind, stash local bot edits, `git pull --ff-only`, pop.
-2. If `Dockerfile`/`docker/`/`docker-compose.yml` changed → `docker compose up -d --build --force-recreate`.
+2. If `Dockerfile`/`docker/`/`docker-compose.yml` changed → `docker compose up -d --build --force-recreate`, then `docker image prune -f` to drop the 2.27GB image the retag just orphaned (dangling only, never `-a`).
 3. Elif `watchers/` or `lib/*.sh` changed → `docker kill --signal=HUP zoidberg`. The SIGHUP re-execs the scheduler, which runs every plugin `_cleanup` (killing the tmux session) then re-inits and respawns the session with its new launch args and clean context.
 4. Else (agents/scripts/docs) → no reload; those are read fresh at dispatch.
 5. It also syncs the skills repo and the content repo (mirror sync blocks: fetch, stash-pull-pop if the mount has local edits, run `setup.sh` if present) and runs their setup scripts.

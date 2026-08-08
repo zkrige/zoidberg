@@ -268,9 +268,15 @@ matrix keyed on which paths changed between the local and remote HEAD
 
 | Changed paths | Action |
 |---|---|
-| `Dockerfile`, `docker/`, `docker-compose.yml` | `docker compose up -d --build --force-recreate` - full image rebuild and container recreate |
+| `Dockerfile`, `docker/`, `docker-compose.yml` | `docker compose up -d --build --force-recreate` - full image rebuild and container recreate, then `docker image prune -f` |
 | `watchers/` or `lib/*.sh` (and the above did not match) | `docker kill --signal=HUP zoidberg` - in-place graceful reload |
 | anything else (agents/scripts/docs only) | no reload - these are read fresh at dispatch time, nothing is cached in the running process |
+
+The prune on the first row is not housekeeping, it is part of the rebuild. The
+build retags `:latest` onto the new image and leaves the previous one untagged,
+so every build orphans a full 2.27GB image. Left alone that accumulates without
+bound and eventually fills the deploy host's disk. Pruning here rather than from
+a host timer keeps it inside the repo, so a clean install inherits it.
 
 `docker/entrypoint.sh` is **baked into the image** (`Dockerfile:69-70`,
 `COPY docker/entrypoint.sh /entrypoint.sh`), unlike `watchers/` and `lib/`
