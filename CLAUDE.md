@@ -83,10 +83,12 @@ The session is PERSISTENT: it retains real conversation turns across dispatches,
 and a respawn (deploy SIGHUP, daily container restart) resumes the previous
 conversation via `--continue` (`_claude_session_continue_flag`) - the
 transcript lives on the `claude-home` volume, so it survives recreates and
-rebuilds. Exceptions: the wedge-recovery respawn writes
-`state/.session-fresh-spawn` to force a clean session (resuming a wedged
-conversation can resume the wedge), and a first spawn with no prior
-conversation launches without the flag. Context is managed by Claude Code's
+rebuilds. The only exception is a first spawn with no prior conversation,
+which launches without the flag; wedge-recovery respawns also resume (every
+observed "wedge" 2026-08-02..08-13 was a post-restart health-probe false
+positive, fixed by a spawn grace period - see `tests/health_probe_grace.sh` -
+so forcing a fresh session there would have wiped context daily). An operator
+can `touch state/.session-fresh-spawn` to make the next spawn start clean. Context is managed by Claude Code's
 own native automatic compaction on Sonnet 5's 1M context window (confirmed by
 live production testing; no manual token-threshold clearing is needed). The
 daily host `scripts/scheduled-restart.sh` restart still runs to reset tmux and

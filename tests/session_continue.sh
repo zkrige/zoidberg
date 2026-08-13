@@ -31,9 +31,11 @@ touch "$STATE_DIR/.session-fresh-spawn"
 # 4. Marker gone again: back to --continue.
 [ "$(_claude_session_continue_flag)" = "--continue" ] || fail "flag not restored after marker consumed"
 
-# 5. Wiring: the launch line uses the flag; wedge recovery requests fresh.
+# 5. Wiring: the launch line uses the flag. (Wedge respawns deliberately do
+# NOT force fresh: see tests/health_probe_grace.sh - every observed wedge was
+# a post-restart probe false positive, so fresh-on-wedge would have wiped
+# context daily. The marker stays as a manual operator lever.)
 grep -q '_claude_session_continue_flag' <(type _claude_session_launch_tmux) || fail "launch not wired to continue flag"
-grep -q 'session-fresh-spawn' <(type _claude_session_resolve_probe_failure) || fail "wedge respawn does not request fresh spawn"
 
 rm -rf "$WORK"
 echo PASS

@@ -228,6 +228,16 @@ claude_session_spawn() {
   # arrive, since the request_id was posted to a now-dead session.
   echo "$(date +%s%N)-$$-${RANDOM}" > "${STATE_DIR}/.session-generation"
 
+  # Health-probe grace: give the fresh session one full probe interval before
+  # the first probe. _HEALTH_PROBE_LAST starts at 0, so without this the first
+  # probe posted immediately after spawn raced claude's startup (dialog accept,
+  # MCP handshake), timed out, and the +180s second probe landed strike 2:
+  # every daily 02:00 restart produced a false "wedged" respawn at 02:04
+  # (2026-08-02..08-13, 6/6 in the logs).
+  _HEALTH_PROBE_LAST=$(date +%s)
+  _HEALTH_PROBE_STRIKES=0
+  _HEALTH_PROBE_PENDING_RID=""
+
   # A migration re-exec fires once and writes the setting it migrated to, so the
   # relaunch lands on an already-migrated config and keeps its flags.
   local attempt
@@ -504,9 +514,12 @@ _claude_session_resolve_probe_failure() {
 
   log "claude-session: session wedged (no channel reply), respawning"
   notify "♻️ Bot session was wedged (alive but not answering the channel). Auto-respawned."
-  # Fresh session, not --continue: resuming the wedged conversation risks
-  # resuming the wedge.
-  touch "${STATE_DIR}/.session-fresh-spawn"
+  # The respawn resumes the conversation (--continue) like any other respawn.
+  # Production logs show zero content-caused wedges: every wedge respawn from
+  # 2026-08-02 to 2026-08-13 was a post-restart probe false positive (fixed by
+  # the spawn grace below), so forcing a fresh session here would have wiped
+  # context daily for no benefit. state/.session-fresh-spawn remains as a
+  # manual lever for an operator who wants a clean slate.
   claude_session_spawn
 }
 
