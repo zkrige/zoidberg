@@ -145,6 +145,7 @@ comes from the session's own turns, not a re-pasted transcript.
 - `watchers/plugins/whatsapp.sh` - WhatsApp webhook plugin (instant dispatch on self-chat)
 - `watchers/plugins/autoupdate.sh` - in-container backstop (pull, classify, SIGHUP or defer)
 - `lib/channels/bot-channel/server.ts` - bot-channel MCP server (event in, `reply` tool out)
+- `.mcp.json` - registers the session's MCP servers: `bot-channel` (transport, above) and `playwright` (`@playwright/mcp`, headless Chromium baked into the image at build time - navigate/click/fill/screenshot for sites that need a login, since WebFetch can't authenticate)
 - `lib/common.sh` - shared utilities (JSON parsing, project matching, logging, notify)
 - `lib/paths.sh` - host-side path resolution and the `.env` reader/writer, shared by `install.sh`, `setup.sh` and `scripts/self-update.sh`
 - `lib/telegram-*.sh` - Telegram plugin helpers: `-api` (Bot API), `-commands`, `-md` (markdown), `-process`, `-queue`, `-run` (dispatch/stream), `-session` (sessions/history/prompt-sections)

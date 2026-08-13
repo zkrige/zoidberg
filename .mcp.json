@@ -3,6 +3,10 @@
     "bot-channel": {
       "command": "/home/claude/.bun/bin/bun",
       "args": ["/app/lib/channels/bot-channel/server.ts"]
+    },
+    "playwright": {
+      "command": "playwright-mcp",
+      "args": ["--headless"]
     }
   }
 }

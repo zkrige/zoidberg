@@ -55,6 +55,16 @@ RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
+# Playwright MCP server - gives the interactive session a real headless
+# browser (navigate, click, fill forms, screenshot) for sites that need a
+# login rather than plain WebFetch. Browsers are baked into the image at
+# PLAYWRIGHT_BROWSERS_PATH (instead of downloaded lazily per-container) and
+# made world-readable so the non-root `claude` user can launch them.
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+RUN npm install -g @playwright/mcp playwright \
+    && playwright install --with-deps chromium \
+    && chmod -R a+rX /opt/ms-playwright
+
 # whisper for voice note transcription. Install CPU-only torch from the
 # PyTorch CPU wheel index BEFORE openai-whisper: the default torch build pulls
 # in ~2.9GB of NVIDIA CUDA libraries, which are dead weight on this ARM,
