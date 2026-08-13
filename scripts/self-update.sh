@@ -1,6 +1,13 @@
 #!/bin/bash
 set -e
 
+# Singleton: a rebuild takes far longer than the 5-minute cron interval, and
+# the build marker is only written when the build FINISHES, so without this a
+# tick landing mid-build would see "build files changed since last image
+# build" and start a second concurrent docker build.
+exec 9>"/tmp/zoidberg-self-update.lock"
+flock -n 9 || exit 0
+
 # Paths are derived, not hardcoded: setup.sh writes this script's real location
 # into cron, so pinning /opt here silently broke the deploy loop for anyone who
 # installed elsewhere. This script lives in scripts/, so the repo is its parent.
