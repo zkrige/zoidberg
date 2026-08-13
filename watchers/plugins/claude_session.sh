@@ -29,6 +29,27 @@ claude_session_is_alive() {
 }
 
 # ---------------------------------------------------------------------------
+# _claude_session_continue_flag - emit --continue when the spawn should resume
+# the previous conversation. Respawns (deploy SIGHUP, daily container restart)
+# pick up where the session left off: the transcript lives on the claude-home
+# volume, so it survives recreates and rebuilds. Two exceptions: a fresh spawn
+# was explicitly requested via state/.session-fresh-spawn (wedge recovery -
+# resuming a wedged conversation can resume the wedge; the marker is consumed
+# here), or no prior conversation exists (--continue with nothing to continue
+# errors at launch).
+# ---------------------------------------------------------------------------
+_claude_session_continue_flag() {
+  local fresh_marker="${STATE_DIR}/.session-fresh-spawn"
+  if [ -f "$fresh_marker" ]; then
+    rm -f "$fresh_marker"
+    return 0
+  fi
+  if ls "${CLAUDE_PROJECT_TRANSCRIPT_DIR}"/*.jsonl >/dev/null 2>&1; then
+    printf -- '--continue'
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # _claude_session_launch_tmux - create the tmux session and start claude in it
 # ---------------------------------------------------------------------------
 _claude_session_launch_tmux() {
@@ -84,8 +105,11 @@ _claude_session_launch_tmux() {
   # Bypass permissions because the container is the sandbox. All dispatch paths
   # (telegram/cron/whatsapp/retry/self-evolve) post into this one session, so the
   # single appended system prompt covers every path.
+  local continue_flag
+  continue_flag=$(_claude_session_continue_flag)
+  [ -n "$continue_flag" ] && log "claude-session: resuming previous conversation (--continue)"
   tmux send-keys -t "$CLAUDE_TMUX_SESSION" \
-    "cd /app && exec $CLAUDE_BIN --permission-mode bypassPermissions --model $model --append-system-prompt-file $sysprompt_file --dangerously-load-development-channels server:bot-channel" Enter
+    "cd /app && exec $CLAUDE_BIN $continue_flag --permission-mode bypassPermissions --model $model --append-system-prompt-file $sysprompt_file --dangerously-load-development-channels server:bot-channel" Enter
 }
 
 # ---------------------------------------------------------------------------
@@ -480,6 +504,9 @@ _claude_session_resolve_probe_failure() {
 
   log "claude-session: session wedged (no channel reply), respawning"
   notify "♻️ Bot session was wedged (alive but not answering the channel). Auto-respawned."
+  # Fresh session, not --continue: resuming the wedged conversation risks
+  # resuming the wedge.
+  touch "${STATE_DIR}/.session-fresh-spawn"
   claude_session_spawn
 }
 

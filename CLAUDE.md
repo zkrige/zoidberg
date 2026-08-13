@@ -79,13 +79,18 @@ Bun) forwards it to the session as a
 Claude completes the work and calls the `reply` tool exactly once with that
 `request_id`; the server writes the reply to a file the orchestrator polls.
 
-The session is PERSISTENT: it retains real conversation turns across dispatches.
-Context is managed by Claude Code's own native automatic compaction on Sonnet
-5's 1M context window (confirmed by live production testing; no manual
-token-threshold clearing is needed). The daily host
-`scripts/scheduled-restart.sh` restart still runs, not to bound context size
-but to fully reset tmux, auth, and session state as a periodic backstop for a
-session with no `CLAUDE_CODE_DISABLE_1M_CONTEXT` cap.
+The session is PERSISTENT: it retains real conversation turns across dispatches,
+and a respawn (deploy SIGHUP, daily container restart) resumes the previous
+conversation via `--continue` (`_claude_session_continue_flag`) - the
+transcript lives on the `claude-home` volume, so it survives recreates and
+rebuilds. Exceptions: the wedge-recovery respawn writes
+`state/.session-fresh-spawn` to force a clean session (resuming a wedged
+conversation can resume the wedge), and a first spawn with no prior
+conversation launches without the flag. Context is managed by Claude Code's
+own native automatic compaction on Sonnet 5's 1M context window (confirmed by
+live production testing; no manual token-threshold clearing is needed). The
+daily host `scripts/scheduled-restart.sh` restart still runs to reset tmux and
+auth state; conversation context now carries across it.
 
 ### Session system prompt and trust model
 Identity is verified by the TRANSPORT, never by message content: the Telegram
@@ -267,8 +272,9 @@ present the script polls every `RESTART_WAIT_INTERVAL` (10s) for up to
 if one is still there at the cap it SKIPS the day rather than restarting, and
 logs which turn or task blocked it. A restart on top of a live Telegram turn
 kills the session mid-answer and `_telegram_recover_crash` then replays the raw
-message into a fresh, context-free session; a killed cron dispatch leaves its
-lock behind and loses the run's output. A marker older than
+message into the respawned session (which resumes prior context via
+`--continue` but has lost the in-flight partial answer); a killed cron
+dispatch leaves its lock behind and loses the run's output. A marker older than
 `RESTART_MARKER_STALE` (1800s, past the wall timeout and the same threshold as
 cron.sh's own `INFLIGHT_STALE`) has leaked and is ignored, so a stuck file
 cannot disable the restart forever. A missing `state/` directory is a
