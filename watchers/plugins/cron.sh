@@ -68,7 +68,7 @@ cron_field_match() {
 # Parse task fields via jq, \x1f-joined (NOT bash IFS-whitespace, so empty fields survive).
 _cron_parse_schedule() {
   jq -r --arg dm "$DEFAULT_MODEL" --arg de "$DEFAULT_EFFORT" \
-    '.tasks[] | [.name, .cron, .prompt_file, (.enabled|tostring), (.notify_filter // ""), (.model // $dm), (.effort // $de), (if .notify == false then "false" else "true" end), (.wall_timeout // ""), (.pre_check // ""), (.command // "")] | join("\u001f")' \
+    '.tasks[] | [.name, .cron, .prompt_file, (.enabled|tostring), (.notify_filter // ""), (.model // $dm), (.effort // $de), (if .notify == false then "false" else "true" end), (.wall_timeout // ""), (.pre_check // ""), (.command // ""), (.error_filter // "")] | join("\u001f")' \
     "$SCHEDULE_FILE" 2>/dev/null
 }
 
@@ -89,7 +89,7 @@ cron_check_tasks() {
   # the owner their schedule was broken when it was merely empty.
   [ -n "$task_data" ] || return
 
-  while IFS=$'\x1f' read -r name cron prompt_file enabled notify_filter task_model task_effort notify_stdout task_wall_timeout task_pre_check task_command; do
+  while IFS=$'\x1f' read -r name cron prompt_file enabled notify_filter task_model task_effort notify_stdout task_wall_timeout task_pre_check task_command task_error_filter; do
     [ -z "$name" ] && continue
     _cron_apply_models_override
     local state_file="${STATE_DIR}/${name}.last"
@@ -118,7 +118,7 @@ _cron_run_task() {
   if [ -n "$task_command" ]; then
     log "cron: dispatching '${name}' via command (no Claude)"
     _cron_dispatch_command "$name" "$task_command" "$task_wall_timeout" \
-      "$notify_stdout" "$notify_filter" "$current_key" "$state_file" &
+      "$notify_stdout" "$notify_filter" "$current_key" "$state_file" "$task_error_filter" &
     return
   fi
   _cron_dispatch_prompt "$full_prompt_file"
@@ -140,7 +140,7 @@ _cron_dispatch_prompt() {
   fi
   log "cron: dispatching '${name}' via bot-channel"
   _cron_dispatch_botchannel "$name" "$prompt" "$task_wall_timeout" \
-    "$notify_stdout" "$notify_filter" "$current_key" "$state_file" "$inflight_lock" &
+    "$notify_stdout" "$notify_filter" "$current_key" "$state_file" "$inflight_lock" "$task_error_filter" &
 }
 
 _cron_apply_models_override() {
@@ -196,9 +196,24 @@ _export_task_env() {
   export SECRETS_FILE="$(content_path secrets.json)"
 }
 
+# Reply-content failure detection. A task that degrades gracefully looks like a
+# success to the transport (clean reply, empty stderr), so a broken dependency
+# can hide inside "successful" replies indefinitely. error_filter in
+# schedule.json declares what a self-reported failure looks like in the output;
+# a match is logged for self-evolution like any other failure.
+_cron_check_reported_error() {
+  local name="$1" output="$2" error_filter="$3"
+  [ -n "$error_filter" ] || return 0
+  [ -n "$output" ] || return 0
+  if printf '%s' "$output" | grep -qiE "$error_filter"; then
+    log "cron: task '${name}' reported an error in its output (matched: ${error_filter})"
+    log_failure "task_reported_error" "$name" "cron" "filter=${error_filter}"
+  fi
+}
+
 _cron_dispatch_command() {
   local name="$1" task_command="$2" task_wall_timeout="$3"
-  local notify_stdout="$4" notify_filter="$5" current_key="$6" state_file="$7"
+  local notify_stdout="$4" notify_filter="$5" current_key="$6" state_file="$7" error_filter="$8"
   cd "$REPO_DIR" || exit
   _export_task_env
   echo "$current_key" > "$state_file"
@@ -212,6 +227,7 @@ _cron_dispatch_command() {
   else
     log "cron: command task '${name}' completed"
   fi
+  _cron_check_reported_error "$name" "$output" "$error_filter"
   if [ "$notify_stdout" != "false" ] && [ -n "$output" ]; then
     if [ -z "$notify_filter" ] || printf '%s' "$output" | grep -qiE "$notify_filter"; then
       notify "*[${name}]*
@@ -223,7 +239,7 @@ ${output}"
 # Bot-channel task: post prompt into the interactive session, await reply, notify.
 _cron_dispatch_botchannel() {
   local name="$1" prompt="$2" task_wall_timeout="$3"
-  local notify_stdout="$4" notify_filter="$5" current_key="$6" state_file="$7" inflight_lock="$8"
+  local notify_stdout="$4" notify_filter="$5" current_key="$6" state_file="$7" inflight_lock="$8" error_filter="$9"
   cd "$REPO_DIR" || exit
   echo "$current_key" > "$state_file"
   local err_log="${LOGS_DIR}/${name}.err.log"
@@ -239,6 +255,7 @@ _cron_dispatch_botchannel() {
   local err_size_after
   err_size_after=$(wc -c < "$err_log" 2>/dev/null | tr -d ' ')
   [ "${err_size_after:-0}" -gt "${err_size_before:-0}" ] && log_failure "task_error" "$name" "cron"
+  _cron_check_reported_error "$name" "$output" "$error_filter"
   _cron_notify_result "$name" "$output" "$notify_stdout" "$notify_filter"
 }
 

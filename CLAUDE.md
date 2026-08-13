@@ -177,8 +177,12 @@ from it automatically. Each entry: `name`, `cron`, `enabled`, `model`, `effort`,
 and either `prompt_file` (dispatches `${CONTENT_DIR}/<prompt_file>`, e.g.
 `config/agents/<file>.txt`, to the session) or `command` (runs a shell command
 directly, no Claude - for deterministic no-reasoning work). Optional
-`pre_check` gates a run, and `notify_filter` suppresses output unless it
-matches. To see the live set:
+`pre_check` gates a run, `notify_filter` suppresses output unless it
+matches, and `error_filter` (regex, case-insensitive) logs a
+`task_reported_error` failure for self-evolution when the task's reply
+matches it - this catches tasks that degrade gracefully and report a broken
+dependency inside an otherwise clean reply, which the transport-level failure
+signals (stderr growth, post failure, timeout) cannot see. To see the live set:
 ```bash
 jq -r '.tasks[] | "\(.name)\t\(.cron)\tenabled=\(.enabled)"' config/schedule.json
 ```
