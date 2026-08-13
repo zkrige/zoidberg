@@ -188,3 +188,34 @@ verify_mounts() {
   done
   return $rc
 }
+
+# deploy_rebuild_needed <repo_dir> <marker_file> - true when build files
+# (Dockerfile, docker/, docker-compose.yml; keep the pattern identical to
+# _autoupdate_change_class) changed since the commit the running image was
+# BUILT from. Gating on "HEAD != origin/main" misses commits born in the
+# host's own tree (the in-container bot commits to the bind mount and pushes,
+# so HEAD is already at origin/main by the time the deploy cron looks).
+# Marker missing: bootstrap it to HEAD and report no rebuild (matches the old
+# behavior of assuming the running image is current). Marker unreadable as a
+# commit (e.g. history rewritten): conservative rebuild.
+deploy_rebuild_needed() {
+  local repo_dir="$1" marker_file="$2" deployed head
+  head=$(git -C "$repo_dir" rev-parse HEAD) || return 1
+  deployed=$(cat "$marker_file" 2>/dev/null)
+  if [ -z "$deployed" ]; then
+    printf '%s\n' "$head" > "$marker_file"
+    return 1
+  fi
+  [ "$deployed" = "$head" ] && return 1
+  if ! git -C "$repo_dir" cat-file -e "${deployed}^{commit}" 2>/dev/null; then
+    return 0
+  fi
+  git -C "$repo_dir" diff --name-only "$deployed" "$head" \
+    | grep -qE '^(Dockerfile|docker/|docker-compose\.yml)'
+}
+
+# deploy_mark_built <repo_dir> <marker_file> - record HEAD as the commit the
+# image was just built from.
+deploy_mark_built() {
+  git -C "$1" rev-parse HEAD > "$2"
+}

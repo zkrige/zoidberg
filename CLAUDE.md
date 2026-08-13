@@ -236,8 +236,8 @@ registration steps are no-ops when the binary/directory are absent.
 
 Deploy is git-driven via a host cron every 5 minutes (`scripts/self-update.sh`):
 1. `git fetch`; if behind, stash local bot edits, `git pull --ff-only`, pop.
-2. If `Dockerfile`/`docker/`/`docker-compose.yml` changed → `docker compose up -d --build --force-recreate`, then `docker image prune -f` to drop the 2.27GB image the retag just orphaned (dangling only, never `-a`).
-3. Elif `watchers/` or `lib/*.sh` changed → `docker kill --signal=HUP zoidberg`. The SIGHUP re-execs the scheduler, which runs every plugin `_cleanup` (killing the tmux session) then re-inits and respawns the session with its new launch args and clean context.
+2. Rebuild gate, checked on EVERY run (not only when this script pulled): if `Dockerfile`/`docker/`/`docker-compose.yml` changed since the commit recorded in `state/.deployed-build-commit` (the commit the running image was built from; `deploy_rebuild_needed` in `lib/paths.sh`, `tests/deploy_gate.sh`) → `docker compose up -d --build --force-recreate`, record the new commit, then `docker image prune -f` to drop the 2.27GB image the retag just orphaned (dangling only, never `-a`). Gating on the marker instead of the pull catches commits born in the container's own bind-mounted tree (the bot commits and pushes, so HEAD is already at origin/main when the cron looks).
+3. Elif this run pulled and `watchers/` or `lib/*.sh` changed → `docker kill --signal=HUP zoidberg`. The SIGHUP re-execs the scheduler, which runs every plugin `_cleanup` (killing the tmux session) then re-inits and respawns the session with its new launch args and clean context.
 4. Else (agents/scripts/docs) → no reload; those are read fresh at dispatch.
 5. It also syncs the skills repo and the content repo (mirror sync blocks: fetch, stash-pull-pop if the mount has local edits, run `setup.sh` if present) and runs their setup scripts.
 
@@ -245,15 +245,13 @@ So a `git push` to `main` is the entire deploy - the host applies it within 5
 minutes. The bot also auto-pushes its own changes; `autoupdate.sh` is an
 in-container backstop, not the primary mechanism.
 
-The two race, and the host loop loses: it gates its whole rebuild-or-reload
-decision on `HEAD != origin/main`, so a commit `autoupdate.sh` pulled first
-leaves it with nothing to do. `autoupdate.sh` therefore classifies the incoming
-range with the same two patterns (`_autoupdate_change_class`) and acts on it:
-build changes are NOT pulled at all (no docker CLI or socket in the container)
-so the host loop still sees them, `watchers/`/`lib/*.sh` changes are pulled and
-followed by `kill -HUP 1`, and everything else is pulled and left alone. The
-patterns must stay identical to the host's; `tests/autoupdate_class.sh` asserts
-the classification.
+The two race harmlessly for build changes now (the marker gate fires no matter
+who pulled), but `autoupdate.sh` still classifies the incoming range with the
+same two patterns (`_autoupdate_change_class`) and acts on it: build changes
+are NOT pulled at all (no docker CLI or socket in the container),
+`watchers/`/`lib/*.sh` changes are pulled and followed by `kill -HUP 1`, and
+everything else is pulled and left alone. The patterns must stay identical to
+the host's; `tests/autoupdate_class.sh` asserts the classification.
 
 `scripts/scheduled-restart.sh` (host cron, daily) restarts the container to
 reset tmux, auth and session state.

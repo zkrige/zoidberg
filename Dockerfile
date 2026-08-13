@@ -70,7 +70,12 @@ RUN npm install -g @playwright/mcp playwright \
 # in ~2.9GB of NVIDIA CUDA libraries, which are dead weight on this ARM,
 # no-GPU deploy target. Installing the CPU wheel first satisfies whisper's
 # torch dependency so the CUDA variant is never resolved.
-RUN pip3 install --break-system-packages --no-cache-dir --timeout=300 \
+# Debian's pip rejects wheels whose metadata name is unnormalized (e.g.
+# typing_extensions 4.15 on the PyTorch index), falls back to the sdist, and
+# then can't find its flit_core build dep on that same --index-url. Newer pip
+# accepts the wheel, so upgrade it first.
+RUN pip3 install --break-system-packages --no-cache-dir --upgrade pip \
+    && pip3 install --break-system-packages --no-cache-dir --timeout=300 \
     --index-url https://download.pytorch.org/whl/cpu torch \
     && pip3 install --break-system-packages --no-cache-dir --timeout=300 openai-whisper
 
