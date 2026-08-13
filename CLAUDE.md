@@ -192,7 +192,11 @@ repo `${CONTENT_PATH:-../zoidberg-config}` → `/app/config`
 environment. `config/` joins `skills/` as a bind-mounted repo - same pattern,
 separate repo. `docker/entrypoint.sh` reads git identity
 (`.git.user_name`/`.git.user_email`) from `/app/config/config.json`, and
-chowns `/app/config/secrets.json` (the bind-mount may land root-owned).
+chowns `/app/config/secrets.json` (the bind-mount may land root-owned). If the
+overlay contains a `firebase-tools.json` (a logged-in Firebase CLI
+configstore), the entrypoint installs it to `~/.config/configstore/` on every
+start; `firebase-tools` needs real CLI login state (gcloud ADC is rejected)
+and `~/.config` is container-local, wiped on rebuild.
 
 ### Host paths and `.env`
 Compose's relative defaults resolve against the compose file's directory, so

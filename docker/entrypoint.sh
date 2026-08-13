@@ -13,6 +13,18 @@ sudo chown -R claude:claude /app/state /app/logs /app/store 2>/dev/null || true
 # secrets.json may be bind-mounted as root; fix ownership
 sudo chown claude:claude /app/config/secrets.json 2>/dev/null || true
 
+# Firebase CLI login state (optional, content-override-by-presence): firebase-tools
+# requires real CLI login state and rejects gcloud ADC, so the operator drops a
+# logged-in ~/.config/configstore/firebase-tools.json into the content overlay.
+# ~/.config is container-local (not a volume), so install it on every start.
+if [ -f /app/config/firebase-tools.json ]; then
+  sudo chown claude:claude /app/config/firebase-tools.json 2>/dev/null || true
+  mkdir -p ~/.config/configstore
+  cp /app/config/firebase-tools.json ~/.config/configstore/firebase-tools.json
+  chmod 600 ~/.config/configstore/firebase-tools.json
+  echo "[entrypoint] Installed Firebase CLI credentials from content overlay"
+fi
+
 # ---------------------------------------------------------------------------
 # Restore critical configs from host backup if volume is fresh
 # /app/store/ is on the host bind-mount, so it survives volume recreation.
