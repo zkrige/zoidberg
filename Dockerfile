@@ -1,4 +1,7 @@
 ARG ENABLE_WHATSAPP=0
+ARG ENABLE_WHISPER=1
+ARG WHISPER_MODEL=base
+ARG WHISPER_NATIVE=0
 
 # -----------------------------------------------------------------------------
 # WhatsApp bridge + MCP server payload
@@ -37,17 +40,79 @@ RUN mkdir -p /out
 FROM whatsapp-payload-${ENABLE_WHATSAPP} AS whatsapp-payload
 
 # -----------------------------------------------------------------------------
+# whisper.cpp payload
+#
+# Voice-note transcription, built from source and gated with the same two-stage
+# trick as the WhatsApp payload above: `--build-arg ENABLE_WHISPER=0` swaps in
+# the empty stand-in, so nothing whisper-related reaches the final image. It
+# defaults to 1 because the Telegram and WhatsApp plugins both hand audio to
+# `transcribe`; turn it off only if you never send voice notes. Note that the
+# skipped stage is only skipped under BuildKit - the classic builder builds
+# every stage regardless, so on a host without buildx the gate keeps the image
+# clean but does not save the compile.
+#
+# whisper.cpp replaced the openai-whisper Python package, which dragged in a
+# 639MB torch (1.1GB of dist-packages all told) to run the same models far
+# slower. Measured here on an RK3588 (8 threads, 60s clip), openai-whisper vs
+# this stage: base 89s -> 16.3s at the defaults below, or 8.6s with
+# WHISPER_NATIVE=1. Those are one board's numbers, not a promise, which is why
+# the model and the tuning are build args rather than fixed choices.
+#
+# WHISPER_MODEL is any name `download-ggml-model.sh` accepts (tiny, base,
+# small, medium, large-v3-turbo, and the English-only `.en` variants, which are
+# more accurate than their multilingual namesake but only transcribe English).
+# The default `base` is multilingual and ~142MB, comfortable on modest
+# hardware. Faster boards can afford `small.en` (~488MB) or better.
+#
+# WHISPER_NATIVE maps to ggml's GGML_NATIVE, and it is a portability/speed
+# trade, worth about 2x on the reference board. The default 0 targets the
+# architecture baseline, so the image runs on any host of that arch. Setting it
+# to 1 compiles -mcpu=native against the BUILD host's exact CPU: correct for
+# the normal deploy here, where `docker compose up -d --build` runs on the same
+# machine as the container, and wrong the moment that image is moved to a
+# different CPU, where it will fault rather than run slowly.
+#
+# Built static (BUILD_SHARED_LIBS=OFF) so the final stage needs one binary and
+# no libwhisper/libggml beside it. The toolchain never leaves this stage.
+# -----------------------------------------------------------------------------
+FROM debian:bookworm-slim AS whisper-payload-1
+ARG WHISPER_MODEL
+ARG WHISPER_NATIVE
+# curl is not optional here: download-ggml-model.sh needs wget2, curl or wget
+# and exits non-zero with "Either wget2, curl, or wget is required" without one.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential cmake git ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
+RUN git clone -q --depth 1 --branch v1.9.2 \
+      https://github.com/ggml-org/whisper.cpp /src/whisper.cpp \
+    && cd /src/whisper.cpp \
+    && cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+         -DGGML_NATIVE="$([ "${WHISPER_NATIVE}" = "1" ] && echo ON || echo OFF)" \
+         -DWHISPER_BUILD_TESTS=OFF \
+    && cmake --build build -j"$(nproc)" --config Release --target whisper-cli \
+    && sh ./models/download-ggml-model.sh "${WHISPER_MODEL}" \
+    && mkdir -p /out \
+    && cp build/bin/whisper-cli /out/whisper-cli \
+    && cp "models/ggml-${WHISPER_MODEL}.bin" /out/model.bin
+
+FROM debian:bookworm-slim AS whisper-payload-0
+RUN mkdir -p /out
+
+FROM whisper-payload-${ENABLE_WHISPER} AS whisper-payload
+
+# -----------------------------------------------------------------------------
 # Final image
 # -----------------------------------------------------------------------------
 FROM debian:bookworm-slim AS final
 ARG ENABLE_WHATSAPP=0
+ARG ENABLE_WHISPER=1
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash jq curl git python3 python3-pip python3-venv \
     qpdf lsof procps xxd sqlite3 openssh-client ca-certificates \
-    ffmpeg wget sudo tmux unzip \
+    ffmpeg wget sudo tmux unzip libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Node.js 24 via NodeSource
@@ -65,19 +130,22 @@ RUN npm install -g @playwright/mcp playwright \
     && playwright install --with-deps chromium \
     && chmod -R a+rX /opt/ms-playwright
 
-# whisper for voice note transcription. Install CPU-only torch from the
-# PyTorch CPU wheel index BEFORE openai-whisper: the default torch build pulls
-# in ~2.9GB of NVIDIA CUDA libraries, which are dead weight on this ARM,
-# no-GPU deploy target. Installing the CPU wheel first satisfies whisper's
-# torch dependency so the CUDA variant is never resolved.
-# Debian's pip rejects wheels whose metadata name is unnormalized (e.g.
-# typing_extensions 4.15 on the PyTorch index), falls back to the sdist, and
-# then can't find its flit_core build dep on that same --index-url. Newer pip
-# accepts the wheel, so upgrade it first.
-RUN pip3 install --break-system-packages --no-cache-dir --upgrade pip \
-    && pip3 install --break-system-packages --no-cache-dir --timeout=300 \
-    --index-url https://download.pytorch.org/whl/cpu torch \
-    && pip3 install --break-system-packages --no-cache-dir --timeout=300 openai-whisper
+# whisper.cpp binary + model, built in the whisper-payload stage above (empty
+# when ENABLE_WHISPER=0). `transcribe <audio>` is the only entry point: it
+# resamples to the 16kHz mono WAV whisper.cpp needs and prints the transcript
+# to stdout. The wrapper is installed either way and exits non-zero with a
+# build hint when the binary is absent, so a disabled build fails loudly at the
+# call site instead of looking like a broken transcription.
+ENV WHISPER_MODEL=/opt/whisper/model.bin
+COPY --from=whisper-payload /out/ /tmp/whisper-payload/
+COPY docker/transcribe /usr/local/bin/transcribe
+RUN if [ -f /tmp/whisper-payload/whisper-cli ]; then \
+      mv /tmp/whisper-payload/whisper-cli /usr/local/bin/whisper-cli && \
+      mkdir -p /opt/whisper && \
+      mv /tmp/whisper-payload/model.bin /opt/whisper/model.bin; \
+    fi && \
+    rm -rf /tmp/whisper-payload && \
+    chmod +x /usr/local/bin/transcribe
 
 # uv (Python package manager) - only needed for the WhatsApp MCP server, which
 # is invoked at runtime via `uv run main.py`, so (unlike the Go bridge) it

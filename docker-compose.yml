@@ -6,6 +6,17 @@ services:
         # Optional image components, off by default. Enable a feature's build
         # with e.g. ENABLE_WHATSAPP=1 docker compose up -d --build
         ENABLE_WHATSAPP: ${ENABLE_WHATSAPP:-0}
+        # Voice-note transcription (whisper.cpp), on by default because both
+        # message plugins hand audio to `transcribe`. ENABLE_WHISPER=0 skips
+        # the compile and the model download entirely. WHISPER_MODEL is any
+        # name whisper.cpp's download-ggml-model.sh takes; bigger is more
+        # accurate and slower, and `.en` variants are English-only.
+        ENABLE_WHISPER: ${ENABLE_WHISPER:-1}
+        WHISPER_MODEL: ${WHISPER_MODEL:-base}
+        # WHISPER_NATIVE=1 compiles for the build host's exact CPU, worth ~2x.
+        # Safe when you build on the machine you deploy on (the default here);
+        # it will fault if that image is then moved to a different CPU.
+        WHISPER_NATIVE: ${WHISPER_NATIVE:-0}
     container_name: zoidberg
     restart: unless-stopped
     volumes:

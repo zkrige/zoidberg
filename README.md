@@ -19,6 +19,8 @@ equally well.
 - **Scheduled tasks.** Anything you can describe: a morning briefing, a report,
   a check that something is still up. Some need Claude to read and reason, some
   are just a script on a timer. Both are supported.
+- **Voice notes, transcribed on the box.** Send audio and it reads it back to
+  you. Runs locally via whisper.cpp, so nothing is uploaded anywhere.
 - **Optional WhatsApp triage**, off by default.
 
 Nothing is scheduled when you install it. You tell it what you want, and it
@@ -59,6 +61,17 @@ curl -fsSL https://raw.githubusercontent.com/zkrige/zoidberg/main/install.sh | R
 Your config and skills directories default to siblings of it, the installer
 records all three in the repo's `.env`, and docker compose reads that. No file
 needs editing. `CONTENT_PATH` and `SKILLS_PATH` move those two independently.
+
+Voice-note transcription is built into the image and needs no account or API
+key. It defaults to whisper's multilingual `base` model, which is a reasonable
+fit for modest hardware. Set `WHISPER_MODEL` in `.env` to trade size and speed
+for accuracy (`tiny` through `large-v3-turbo`; the `.en` variants are more
+accurate but English-only), or `ENABLE_WHISPER=0` to leave it out entirely.
+Either way, rebuild with `docker compose up -d --build`. How fast it runs is
+down to your hardware: on the Orange Pi 5 this was developed on, `base`
+transcribes a 60-second clip in about 16 seconds. If you build on the same
+machine you run on, `WHISPER_NATIVE=1` compiles for that exact CPU and roughly
+halves it, at the cost of an image that will not run on a different one.
 
 ## Your stuff stays yours
 

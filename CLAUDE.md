@@ -175,6 +175,7 @@ comes from the session's own turns, not a re-pasted transcript.
 - `scripts/self-update.sh` - host-cron git-driven deploy (pull + reload/rebuild + skills + content sync)
 - `scripts/scheduled-restart.sh` - host-cron daily container restart (tmux/auth/session hygiene), deferred while a Telegram turn or a cron task is in flight
 - `docker/entrypoint.sh` - container startup (auth check, git config, `exec scheduler.sh`)
+- `docker/transcribe` - voice-note transcription (`transcribe <audio-file>` → transcript on stdout), wrapping the whisper.cpp binary baked into the image
 - `install.sh` - one-command bootstrap: prerequisites, clone, content overlay, then `setup.sh run`
 - `setup.sh` - deterministic setup dispatcher: usage text, output helpers, path resolution, `json_write`, `ask`, and the subcommand `case`
 - `lib/setup-*.sh` - the subcommands themselves, sourced by `setup.sh`: `-telegram` (token, chat-id discovery, installer messages), `-config` (`feature`, `identity`, `env`, `status`), `-login` (Claude sign-in), `-cron` (host cron entries), `-verify` (end-to-end check), `-run` (the install sequence)
@@ -240,6 +241,27 @@ ENABLE_WHATSAPP=1` (default `0`). The default build never touches those
 paths, installs no Go/gcc/uv, and produces no `whatsapp-bridge` binary or
 `/opt/whatsapp-mcp-server`; `docker/entrypoint.sh`'s bridge-start and MCP
 registration steps are no-ops when the binary/directory are absent.
+
+Voice-note transcription is `transcribe <audio-file>` (`docker/transcribe`),
+which resamples to 16kHz mono WAV and prints the transcript to stdout. It wraps
+a whisper.cpp `whisper-cli` built from source in the `whisper-payload` stage.
+Three build args tune it, all surfaced through `docker-compose.yml` so `.env`
+sets them:
+- `ENABLE_WHISPER` (default `1`) - `0` swaps in the empty payload stage, so no binary or model reaches the image and `transcribe` exits non-zero with a rebuild hint.
+- `WHISPER_MODEL` (default `base`) - any name whisper.cpp's `download-ggml-model.sh` accepts. Bigger is more accurate and slower; `.en` variants are English-only.
+- `WHISPER_NATIVE` (default `0`) - `1` compiles `-mcpu=native` against the BUILD host's CPU, worth ~2x. Correct for the normal deploy here (`docker compose up -d --build` runs on the machine that runs the container) and wrong the moment that image moves to a different CPU, where it faults rather than running slowly.
+
+The build also sets `BUILD_SHARED_LIBS=OFF`, so one static binary ships without
+libwhisper/libggml beside it. Speed is host-dependent: on the RK3588 reference
+box, 8 threads against a 60s clip, `base` takes 16.3s at the defaults and 8.6s
+with `WHISPER_NATIVE=1`, against 89s for the openai-whisper package this
+replaced. Dropping that package also removed a 639MB torch install (1.1GB of
+`dist-packages`), against ~142MB for the default model.
+
+Neither gate saves build time without BuildKit: the classic builder builds
+every stage regardless of which one the `FROM ...-${ARG}` line selects, so a
+host with no `buildx` (the RK3588 reference box included) still compiles the
+disabled payloads. The gates keep the image clean, not the build fast.
 
 Deploy is git-driven via a host cron every 5 minutes (`scripts/self-update.sh`):
 1. `git fetch`; if behind, stash local bot edits, `git pull --ff-only`, pop.

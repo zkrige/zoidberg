@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Transcribe one audio file to stdout.
+#
+# The single entry point for voice-note transcription, used by the Telegram and
+# WhatsApp paths alike. whisper.cpp only reads 16kHz mono PCM WAV, so ffmpeg
+# resamples whatever the transport handed us (both send .ogg/opus) first.
+#
+# The model is fixed at image build time (WHISPER_MODEL build arg, see
+# Dockerfile), so there is nothing to choose here: whichever model the operator
+# baked in is the one that runs. Speed is entirely a function of that choice
+# and the host - measure your own box rather than assuming a clip length is
+# safe, and if it is too slow, rebuild with a smaller model.
+set -euo pipefail
+
+audio="${1:-}"
+if [[ -z "$audio" ]]; then
+  echo "usage: transcribe <audio-file>" >&2
+  exit 2
+fi
+if [[ ! -f "$audio" ]]; then
+  echo "transcribe: no such file: $audio" >&2
+  exit 1
+fi
+
+if ! command -v whisper-cli >/dev/null 2>&1; then
+  echo "transcribe: whisper-cli is not installed in this image." >&2
+  echo "transcribe: rebuild with ENABLE_WHISPER=1 (see Dockerfile)." >&2
+  exit 1
+fi
+
+model="${WHISPER_MODEL:?WHISPER_MODEL is not set}"
+if [[ ! -f "$model" ]]; then
+  echo "transcribe: model not found: $model" >&2
+  exit 1
+fi
+
+wav=$(mktemp --suffix=.wav)
+trap 'rm -f "$wav"' EXIT
+
+ffmpeg -v error -y -i "$audio" -ar 16000 -ac 1 -c:a pcm_s16le "$wav"
+whisper-cli -m "$model" -f "$wav" -t "$(nproc)" --no-prints --no-timestamps
