@@ -11,7 +11,8 @@ Docker container and sources a set of plugin scripts. The plugins feed work
 into ONE always-on interactive `claude` session running in tmux. That session
 is the only thing that ever talks to Claude: Telegram messages, WhatsApp
 triage, and cron-scheduled tasks are all delivered to it as events over a
-localhost MCP channel, and it replies by calling a `reply` tool.
+localhost MCP channel. It sends interim updates with a `progress` tool and
+finishes by calling a `reply` tool, which ends the request.
 
 ## Components and responsibilities
 
@@ -23,7 +24,7 @@ localhost MCP channel, and it replies by calling a `reply` tool.
 | Core plugin: autoupdate | `watchers/plugins/autoupdate.sh` | In-container `git fetch`/`pull --rebase` backstop, auto-push of bot-authored commits, ownership-drift healing, reload-or-defer on the pulled range |
 | Optional plugin: Telegram | `watchers/plugins/telegram.sh` (+ `lib/telegram-*.sh`) | Long-polls the Bot API, queues/streams messages, implements `/`-commands |
 | Optional plugin: WhatsApp | `watchers/plugins/whatsapp.sh` (+ `lib/whatsapp-dispatch.sh`) | Webhook listener, instant self-chat triage dispatch |
-| Bot-channel MCP transport | `lib/channels/bot-channel/server.ts` | HTTP listener on `127.0.0.1:8790`; forwards events into the live session as an MCP notification; exposes the `reply` tool |
+| Bot-channel MCP transport | `lib/channels/bot-channel/server.ts` | HTTP listener on `127.0.0.1:8790`; forwards events into the live session as an MCP notification; exposes the `reply` tool (final, ends the request) and the `progress` tool (interim, keeps it open) |
 | Content overlay | `config/` (submodule) | Operator-specific config, secrets, schedule, task prompts, scripts - resolved via `CONTENT_DIR` |
 | State | `state/` (`STATE_DIR`, `watchers/scheduler.sh:11`) | Per-task last-run markers, session system prompt, memory, feedback log, named session logs, in-flight locks |
 | Logs | `logs/` (`LOGS_DIR`, `watchers/scheduler.sh:12`) | `automations.log` (orchestrator log via `log()`, `lib/common.sh:66-71`) plus per-task `<name>.log`/`<name>.err.log` |

@@ -220,8 +220,9 @@ _claude_session_flags_survived() {
 claude_session_spawn() {
   log "claude-session: spawning interactive session '${CLAUDE_TMUX_SESSION}'"
   mkdir -p "$BOT_CHANNEL_REPLIES_DIR"
-  # Clean stale replies from previous run
+  # Clean stale replies and undrained progress updates from the previous run
   rm -f "${BOT_CHANNEL_REPLIES_DIR}"/*.txt 2>/dev/null
+  rm -f "${BOT_CHANNEL_REPLIES_DIR}"/*.progress.* 2>/dev/null
   # Bump the generation marker so in-flight bot_channel_wait_reply callers can
   # detect their session was torn down mid-wait (e.g. a SIGHUP reload) and fail
   # fast instead of blocking for the full wall_timeout on a reply that can never

@@ -285,6 +285,10 @@ _cron_wait_reply() {
     rm -f "$inflight_lock"
     log "cron: task '${name}' completed"
   fi
+  # A cron task that called the `progress` tool leaves sequenced files behind:
+  # only the Telegram stream loop drains those, and a scheduled task's output is
+  # its reply. Drop them so they cannot accumulate in the replies dir.
+  rm -f "${BOT_CHANNEL_REPLIES_DIR}/${request_id}".progress.*
   printf '%s' "$output"
 }
 

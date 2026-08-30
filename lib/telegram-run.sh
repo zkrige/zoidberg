@@ -75,6 +75,50 @@ _telegram_run_status_tick() {
 }
 
 # ---------------------------------------------------------------------------
+# _telegram_progress_files - Print this request's pending progress files, in the
+# order the session wrote them. The `progress` MCP tool zero-pads a monotonic
+# sequence into the filename, so a lexical sort IS the write order (update 10
+# stays after update 9). Prints nothing when there are none.
+# Usage: _telegram_progress_files <replies_dir> <request_id>
+# ---------------------------------------------------------------------------
+_telegram_progress_files() {
+  local dir="$1" rid="$2" f
+  for f in "${dir}/${rid}".progress.*; do
+    [ -f "$f" ] && printf '%s\n' "$f"
+  done | sort
+}
+
+# ---------------------------------------------------------------------------
+# _telegram_run_drain_progress - Deliver any interim updates the session sent
+# via the `progress` tool, then delete them.
+#
+# `reply` ends the request, so a turn that used it to say "checking now, will
+# confirm shortly" delivered a promise and then stranded the work: no second
+# message is ever sent. `progress` is the escape hatch that keeps the request
+# open, and this drains it. Each update is deleted after sending so a later
+# poll cannot resend it.
+#
+# The "[Nm]working" status message is removed first: an interim update should
+# be the last thing on screen, and the status tick recreates its line below.
+# ---------------------------------------------------------------------------
+_telegram_run_drain_progress() {
+  local f text sent=0
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    text=$(cat "$f")
+    rm -f "$f"
+    [ -n "$text" ] || continue
+    if [ "$sent" -eq 0 ] && [ -n "$_status_msg_id" ]; then
+      tg_delete "$_status_msg_id"
+      _status_msg_id=""
+    fi
+    sent=1
+    tg_send "$text"
+    log "telegram: progress update delivered for ${request_id} (${#text} chars)"
+  done < <(_telegram_progress_files "$BOT_CHANNEL_REPLIES_DIR" "$request_id")
+}
+
+# ---------------------------------------------------------------------------
 # _telegram_run_stream - Wait for the reply file, ticking status + wall timeout.
 # ---------------------------------------------------------------------------
 _telegram_run_stream() {
@@ -87,6 +131,7 @@ _telegram_run_stream() {
     local elapsed=$(( SECONDS - start_time ))
 
     _telegram_run_status_tick
+    _telegram_run_drain_progress
 
     # Idle-fallback: the model can finish a turn (and even print the full
     # answer) without calling the `reply` tool, which leaves the orchestrator
@@ -145,6 +190,8 @@ _telegram_run_stream() {
 # _telegram_run_collect - Read the reply, clean up media + background pids + status.
 # ---------------------------------------------------------------------------
 _telegram_run_collect() {
+  _telegram_run_drain_progress
+
   response=""
   if [ -f "$reply_file" ]; then
     response=$(cat "$reply_file")

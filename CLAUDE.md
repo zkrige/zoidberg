@@ -79,6 +79,17 @@ Bun) forwards it to the session as a
 Claude completes the work and calls the `reply` tool exactly once with that
 `request_id`; the server writes the reply to a file the orchestrator polls.
 
+`reply` ENDS the request - the turn is over and nothing further reaches the
+owner - so a turn that used it to acknowledge ("checking now, will confirm
+shortly") delivered a promise and then stranded the work, leaving the owner to
+ping again. Interim updates therefore go through a second tool, `progress`,
+which writes a sequenced `<request_id>.progress.<seq>` file and leaves the
+request open. `_telegram_run_drain_progress` (`lib/telegram-run.sh`) sends and
+deletes those while it waits, in write order; `_cron_wait_reply` discards any a
+scheduled task left behind, and `claude_session_spawn` sweeps stale ones.
+`tests/progress_drain.sh` covers ordering, delete-after-send, and the
+reply/other-request files it must not touch.
+
 The session is PERSISTENT: it retains real conversation turns across dispatches,
 and a respawn (deploy SIGHUP, daily container restart) resumes the previous
 conversation via `--continue` (`_claude_session_continue_flag`) - the
@@ -151,7 +162,7 @@ comes from the session's own turns, not a re-pasted transcript.
 - `watchers/plugins/cron.sh` - cron engine (schedule matching, pre_check gates, dispatch)
 - `watchers/plugins/whatsapp.sh` - WhatsApp webhook plugin (instant dispatch on self-chat)
 - `watchers/plugins/autoupdate.sh` - in-container backstop (pull, classify, SIGHUP or defer)
-- `lib/channels/bot-channel/server.ts` - bot-channel MCP server (event in, `reply` tool out)
+- `lib/channels/bot-channel/server.ts` - bot-channel MCP server (event in; `reply` tool ends the request, `progress` tool sends an interim update and keeps it open)
 - `.mcp.json` - registers the session's MCP servers: `bot-channel` (transport, above) and `playwright` (`@playwright/mcp`, headless Chromium baked into the image at build time - navigate/click/fill/screenshot for sites that need a login, since WebFetch can't authenticate)
 - `lib/common.sh` - shared utilities (JSON parsing, project matching, logging, notify)
 - `lib/paths.sh` - host-side path resolution and the `.env` reader/writer, shared by `install.sh`, `setup.sh` and `scripts/self-update.sh`
