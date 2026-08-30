@@ -91,7 +91,7 @@ elif [ "$PULLED" = 1 ]; then
   # graceful reload (re-sources plugins + re-reads config). Pure
   # agents/scripts/docs changes are read fresh at dispatch and need no reload.
   CHANGED=$(git diff --name-only "$LOCAL" "$REMOTE")
-  if printf '%s\n' "$CHANGED" | grep -qE '^(watchers/|lib/.*\.sh)'; then
+  if printf '%s\n' "$CHANGED" | grep -qE '^(watchers/|lib/.*\.sh|lib/channels/)'; then
     echo "[self-update] scheduler code changed, reloading via SIGHUP"
     docker kill --signal=HUP zoidberg 2>&1 || true
   else

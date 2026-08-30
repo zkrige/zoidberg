@@ -290,7 +290,7 @@ disabled payloads. The gates keep the image clean, not the build fast.
 Deploy is git-driven via a host cron every 5 minutes (`scripts/self-update.sh`):
 1. `git fetch`; if behind, stash local bot edits, `git pull --ff-only`, pop.
 2. Rebuild gate, checked on EVERY run (not only when this script pulled): if `Dockerfile`/`docker/`/`docker-compose.yml` changed since the commit recorded in `state/.deployed-build-commit` (the commit the running image was built from; `deploy_rebuild_needed` in `lib/paths.sh`, `tests/deploy_gate.sh`) → `docker compose up -d --build --force-recreate`, record the new commit, then `docker image prune -f` to drop the 2.27GB image the retag just orphaned (dangling only, never `-a`). Gating on the marker instead of the pull catches commits born in the container's own bind-mounted tree (the bot commits and pushes, so HEAD is already at origin/main when the cron looks).
-3. Elif this run pulled and `watchers/` or `lib/*.sh` changed → `docker kill --signal=HUP zoidberg`. The SIGHUP re-execs the scheduler, which runs every plugin `_cleanup` (killing the tmux session) then re-inits and respawns the session with its new launch args and clean context.
+3. Elif this run pulled and `watchers/`, `lib/*.sh` or `lib/channels/` changed → `docker kill --signal=HUP zoidberg`. (`lib/channels/` counts because the bot-channel MCP server is launched by the session: without a respawn the new file is on disk and the old server keeps running.) The SIGHUP re-execs the scheduler, which runs every plugin `_cleanup` (killing the tmux session) then re-inits and respawns the session with its new launch args and clean context.
 4. Else (agents/scripts/docs) → no reload; those are read fresh at dispatch.
 5. It also syncs the skills repo and the content repo (mirror sync blocks: fetch, stash-pull-pop if the mount has local edits, run `setup.sh` if present) and runs their setup scripts.
 
@@ -302,7 +302,7 @@ The two race harmlessly for build changes now (the marker gate fires no matter
 who pulled), but `autoupdate.sh` still classifies the incoming range with the
 same two patterns (`_autoupdate_change_class`) and acts on it: build changes
 are NOT pulled at all (no docker CLI or socket in the container),
-`watchers/`/`lib/*.sh` changes are pulled and followed by `kill -HUP 1`, and
+`watchers/`/`lib/*.sh`/`lib/channels/` changes are pulled and followed by `kill -HUP 1`, and
 everything else is pulled and left alone. The patterns must stay identical to
 the host's; `tests/autoupdate_class.sh` asserts the classification.
 

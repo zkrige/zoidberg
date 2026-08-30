@@ -40,7 +40,7 @@ _autoupdate_change_class() { # <newline-separated paths> -> build|code|content
   local changed="$1"
   if printf '%s\n' "$changed" | grep -qE '^(Dockerfile|docker/|docker-compose\.yml)'; then
     printf 'build'
-  elif printf '%s\n' "$changed" | grep -qE '^(watchers/|lib/.*\.sh)'; then
+  elif printf '%s\n' "$changed" | grep -qE '^(watchers/|lib/.*\.sh|lib/channels/)'; then
     printf 'code'
   else
     printf 'content'

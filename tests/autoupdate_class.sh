@@ -25,7 +25,10 @@ check "docker-compose.yml" build
 check "watchers/scheduler.sh" code
 check "watchers/plugins/cron.sh" code
 check "lib/common.sh" code
-check "lib/channels/bot-channel/server.ts" content
+# The bot-channel MCP server is launched by the session, so a change to it only
+# takes effect on a respawn. Classifying it as content deployed the new file and
+# left the old server running until the next daily restart.
+check "lib/channels/bot-channel/server.ts" code
 check "README.md" content
 check "agents/guardrails.txt" content
 check "tests/json_write.sh" content
