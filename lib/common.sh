@@ -172,12 +172,35 @@ content_path() { printf '%s/%s' "$CONTENT_DIR" "$1"; }
 # ${CONTENT_DIR}/agents/ overrides the shipped default in ${REPO_DIR}/agents/.
 # ---------------------------------------------------------------------------
 framework_prompt() {
-  local name="$1"
+  local name="$1" base local_add
   if [ -f "${CONTENT_DIR}/agents/${name}" ]; then
-    printf '%s/agents/%s' "$CONTENT_DIR" "$name"
+    base="${CONTENT_DIR}/agents/${name}"
   else
-    printf '%s/agents/%s' "$REPO_DIR" "$name"
+    base="${REPO_DIR}/agents/${name}"
   fi
+
+  # Additive overlay: <name>.local.txt is APPENDED to the base rather than
+  # replacing it, so operator additions do not fork the framework prompt.
+  # A full override (the base branch above) shadows the shipped file forever:
+  # every later framework fix stops reaching that install, silently, and only a
+  # manual diff reveals it. Prefer .local for anything that is an addition.
+  local_add="${CONTENT_DIR}/agents/${name%.txt}.local.txt"
+  [ -f "$local_add" ] || { printf '%s' "$base"; return; }
+
+  # Merge into STATE_DIR so callers keep receiving a single readable path.
+  # Regenerated on every call: these are small files and an edit must take
+  # effect without a redeploy.
+  # STATE_DIR may be unset in a caller running under `set -u` (setup scripts,
+  # tests): degrade to the base rather than aborting the whole process.
+  local state="${STATE_DIR:-}"
+  local merged="${state}/prompts/${name}"
+  if [ -z "$state" ] || ! mkdir -p "${state}/prompts" 2>/dev/null; then
+    log "framework_prompt: cannot write STATE_DIR/prompts, ignoring ${local_add}"
+    printf '%s' "$base"
+    return
+  fi
+  { cat "$base"; printf '\n'; cat "$local_add"; } > "${merged}.tmp" && mv -f "${merged}.tmp" "$merged"
+  printf '%s' "$merged"
 }
 
 # ---------------------------------------------------------------------------

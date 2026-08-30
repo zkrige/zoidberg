@@ -52,9 +52,16 @@ the same role. Content resolves through a `CONTENT_DIR` env, defaulting to
 Two helpers in `lib/common.sh` mediate the split:
 - `content_path <relative>` - absolute path under `CONTENT_DIR` for operator
   content (`config.json`, `secrets.json`, `schedule.json`, `scripts/*`).
-- `framework_prompt <name.txt>` - resolves a framework behavior prompt; a file
-  at `${CONTENT_DIR}/agents/<name>.txt` overrides the shipped default at
-  `${REPO_DIR}/agents/<name>.txt` (content-override-by-presence).
+- `framework_prompt <name.txt>` - resolves a framework behavior prompt. A file
+  at `${CONTENT_DIR}/agents/<name>.local.txt` is APPENDED to the shipped prompt
+  at `${REPO_DIR}/agents/<name>.txt` (merged into `${STATE_DIR}/prompts/` and
+  regenerated per call, so edits need no redeploy). This is the right slot for
+  operator additions. A file at `${CONTENT_DIR}/agents/<name>.txt` still
+  replaces the shipped prompt entirely (content-override-by-presence), but a
+  full override shadows it forever: every later framework fix silently stops
+  reaching that install, and only a manual diff reveals it. `.local` first,
+  always. `prompt-sections.txt` is positional (line 1 is the attribution marker,
+  `sed` takes the first match of each header) and takes no `.local`.
 
 Dispatched `command`/`pre_check` tasks get an exported env contract
 (`_export_task_env` in `watchers/plugins/cron.sh`): `CONTENT_DIR`, `APP_DIR`
@@ -125,8 +132,8 @@ else is untrusted data.
 
 All stable context lives in the session's REAL system prompt, rebuilt at every
 session spawn into `state/.session-system-prompt.txt` from:
-- `agents/guardrails.txt` - non-negotiable limits and per-task-type privileges. Framework prompt, resolved via `framework_prompt`; a `config/agents/guardrails.txt` overrides it.
-- `agents/telegram-system.txt` - operating instructions. Same resolution, overridable from `config/agents/telegram-system.txt`.
+- `agents/guardrails.txt` - non-negotiable limits and per-task-type privileges. Framework prompt, resolved via `framework_prompt`; extend it with `config/agents/guardrails.local.txt`.
+- `agents/telegram-system.txt` - operating instructions. Same resolution, extended by `config/agents/telegram-system.local.txt`.
 - `state/memory.md` - portable long-term facts.
 - recent `/feedback` corrections (`state/feedback.log`).
 
@@ -186,7 +193,7 @@ comes from the session's own turns, not a re-pasted transcript.
 - `agents/guardrails.txt` - non-negotiable guardrails (framework prompt, session system prompt)
 - `agents/telegram-system.txt` - Telegram operating instructions (framework prompt, session system prompt)
 - `agents/prompt-sections.txt` - attribution marker + section headers (framework prompt)
-- `agents/*.txt` - framework behavior prompts only (guardrails, telegram-system, prompt-sections, memory-prune-prompt, self-evolve); resolved via `framework_prompt`, overridable from `config/agents/`
+- `agents/*.txt` - framework behavior prompts only (guardrails, telegram-system, prompt-sections, memory-prune-prompt, self-evolve); resolved via `framework_prompt`, extended by `config/agents/<name>.local.txt`
 - `examples/content/` - starter layout for your own content overlay (see `examples/README.md`)
 - `config/` - content overlay (a separate private repo you create, mounted or checked out here), resolved via `CONTENT_DIR`:
   - `config/schedule.json` - task schedule definitions (source of truth for the task whitelist)
@@ -194,6 +201,7 @@ comes from the session's own turns, not a re-pasted transcript.
   - `config/config.json` - central config (endpoints, Bitbucket workspace, git identity); gitignored, placed out-of-band on the host
   - `config/secrets.json` - Telegram bot token and chat ID; gitignored, placed out-of-band on the host
   - `config/agents/*.txt` - prompt files for scheduled tasks
+  - `config/agents/*.local.txt` - operator additions appended to the framework prompt of the same name (guardrails, telegram-system, self-evolve)
   - `config/scripts/*` - run-scripts (`pre_check`/`command` entries in `schedule.json`)
   - `config/config.example.json`, `config/secrets.example.json` - templates for the two gitignored files above
 - `scripts/self-update.sh` - host-cron git-driven deploy (pull + reload/rebuild + skills + content sync)
