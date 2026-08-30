@@ -152,6 +152,16 @@ if [ -d "$CONTENT_PATH/.git" ]; then
 
     [ -f setup.sh ] && bash setup.sh
     maybe_chown -R 1000:1000 "$CONTENT_PATH"
+
+    # The session system prompt is assembled at spawn from agents/ plus the
+    # overlay's agents/*.local.txt, so a prompt change here is invisible to the
+    # running session until it respawns. Without this it waited for the daily
+    # restart. Task prompts and scripts are read fresh at dispatch and need no
+    # reload, so only agents/ triggers one.
+    if git diff --name-only "$CONTENT_LOCAL" "$CONTENT_REMOTE" | grep -qE '^agents/'; then
+      echo "[self-update] content prompts changed, reloading via SIGHUP"
+      docker kill --signal=HUP zoidberg 2>&1 || true
+    fi
     echo "[self-update] $(date): content sync complete"
   fi
 fi
