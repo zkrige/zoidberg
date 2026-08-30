@@ -90,6 +90,19 @@ scheduled task left behind, and `claude_session_spawn` sweeps stale ones.
 `tests/progress_drain.sh` covers ordering, delete-after-send, and the
 reply/other-request files it must not touch.
 
+`progress` also tells the ORCHESTRATOR the request is still live, which is what
+makes background agents work. Dispatching an Agent and ending the turn to wait
+for its completion notification leaves the pane idle, and the stream loop's
+idle-fallback used to read that as a dead turn and nudge within ~4s, forcing a
+premature `reply` that closed the request and stranded the agent's result. So a
+delivered `progress` renews patience for `PROGRESS_PATIENCE` (300s) before the
+idle-fallback may fire, and once nudged the loop waits `NUDGE_GRACE` (30s)
+before scraping the transcript, since the salvage otherwise ships the
+acknowledgement the nudge was sent to replace. Both are declared in
+`watchers/plugins/telegram.sh` beside the other stream tunables. The wall-clock
+check runs FIRST in the loop body: those two windows `continue`, so a check
+below them is unreachable while they hold. `tests/nudge_grace.sh` covers it.
+
 The session is PERSISTENT: it retains real conversation turns across dispatches,
 and a respawn (deploy SIGHUP, daily container restart) resumes the previous
 conversation via `--continue` (`_claude_session_continue_flag`) - the

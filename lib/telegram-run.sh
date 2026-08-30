@@ -113,6 +113,7 @@ _telegram_run_drain_progress() {
       _status_msg_id=""
     fi
     sent=1
+    _last_progress_time=$SECONDS
     tg_send "$text"
     log "telegram: progress update delivered for ${request_id} (${#text} chars)"
   done < <(_telegram_progress_files "$BOT_CHANNEL_REPLIES_DIR" "$request_id")
@@ -126,9 +127,25 @@ _telegram_run_stream() {
   _last_status_time=$(( SECONDS - STATUS_INTERVAL + 30 ))
   local idle_streak=0
   local _reply_nudged=0
+  local _nudge_time=0
+  # Start "stale" so a turn that just ends without saying anything is nudged
+  # immediately. Only a real `progress` call buys patience.
+  _last_progress_time=$(( SECONDS - PROGRESS_PATIENCE ))
 
   while [ ! -f "$reply_file" ]; do
     local elapsed=$(( SECONDS - start_time ))
+
+    # Wall-clock check FIRST: the idle-fallback below `continue`s while it waits
+    # out the progress patience and the nudge grace, so a check placed after it
+    # is unreachable for the whole of those windows and the loop cannot be
+    # killed.
+    if [ "$elapsed" -ge "$CLAUDE_WALL_TIMEOUT" ]; then
+      claude_timed_out=true
+      timeout_type="wall"
+      tmux send-keys -t "$CLAUDE_TMUX_SESSION" Escape 2>/dev/null
+      log "telegram: wall-clock timeout after ${CLAUDE_WALL_TIMEOUT}s, sent Escape"
+      break
+    fi
 
     _telegram_run_status_tick
     _telegram_run_drain_progress
@@ -140,6 +157,15 @@ _telegram_run_stream() {
     # assistant message exists since dispatch, ask for the reply properly
     # before falling back to scraping it.
     if claude_session_is_busy; then
+      idle_streak=0
+    elif [ $(( SECONDS - _last_progress_time )) -lt "$PROGRESS_PATIENCE" ]; then
+      # The session called `progress`, so it has told us the request is still
+      # open. An idle pane here means it dispatched a background agent and
+      # ended its turn to wait for the completion notification, which is a
+      # legitimate shape: it will call `reply` with this request_id when the
+      # agent reports. Nudging at the 4s idle mark instead forced a premature
+      # `reply` that closed the request and stranded the agent's result
+      # (2026-08-30, "Compiling an updated status report - will send shortly").
       idle_streak=0
     else
       idle_streak=$(( idle_streak + 1 ))
@@ -155,10 +181,19 @@ _telegram_run_stream() {
           if [ "$_reply_nudged" -eq 0 ]; then
             _reply_nudged=1
             idle_streak=0
+            _nudge_time=$SECONDS
             log "telegram: turn ended without reply, nudging for ${request_id}"
             bot_channel_post "$request_id" "telegram" \
-              "Your last turn ended without calling the \`reply\` tool, so the owner received nothing. Call \`reply\` now with request_id ${request_id} and the answer you meant to send. Send only the answer itself." \
+              "Your last turn ended without calling the \`reply\` tool, so the owner received nothing. Do NOT acknowledge or promise again. If the work is done, call \`reply\` now with request_id ${request_id} and the actual result, and nothing else. If a background agent is still running, call \`progress\` with what it has produced so far and \`reply\` once it reports." \
               || log "telegram: nudge failed to post for ${request_id}"
+            continue
+          fi
+          # Give the nudge time to land. idle_streak reaches 2 in ~4s, which is
+          # shorter than the model takes to read the nudge and act, so without
+          # this the salvage fires mid-thought and ships the acknowledgement
+          # the nudge was sent to replace (seen 2026-08-30: salvaged at
+          # 13:10:46, the real reply arrived at 13:10:48 and went nowhere).
+          if [ $(( SECONDS - _nudge_time )) -lt "$NUDGE_GRACE" ]; then
             continue
           fi
           local salvaged
@@ -171,15 +206,6 @@ _telegram_run_stream() {
           fi
         fi
       fi
-    fi
-
-    # Wall-clock timeout: interrupt the running task in the tmux session
-    if [ "$elapsed" -ge "$CLAUDE_WALL_TIMEOUT" ]; then
-      claude_timed_out=true
-      timeout_type="wall"
-      tmux send-keys -t "$CLAUDE_TMUX_SESSION" Escape 2>/dev/null
-      log "telegram: wall-clock timeout after ${CLAUDE_WALL_TIMEOUT}s, sent Escape"
-      break
     fi
 
     sleep "$STREAM_INTERVAL"
@@ -295,6 +321,7 @@ telegram_run_claude() {
 
   local heartbeat_pid typing_pid full_prompt request_id response
   local _last_status_time="" _status_msg_id="" claude_timed_out=false timeout_type=""
+  local _last_progress_time=0
   local _baseline_uuid="" reply_salvaged=false
 
   _telegram_run_setup_bg
