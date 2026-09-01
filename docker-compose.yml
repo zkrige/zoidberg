@@ -36,6 +36,11 @@ services:
       - ${WA_STORE_PATH:-wa-bridge-store}:/opt/whatsapp-bridge-store
       - ${SSH_KEY_PATH:-~/.ssh/id_rsa}:/tmp/host-ssh-key:ro
       - ${CONTENT_PATH:-../zoidberg-config}/gcloud-adc.json:/app/config/gcloud-adc.json:ro
+      # SOPS binary and this host's age key, so entrypoint.sh can decrypt
+      # store/volume-backup/credentials.enc.json into the container. The host
+      # keeps only ciphertext plus the key; plaintext lives in the container.
+      - /usr/local/bin/sops:/usr/local/bin/sops:ro
+      - /root/.config/sops/age/keys.txt:/home/claude/.config/sops/age/keys.txt:ro
     dns:
       - 1.1.1.1
       - 8.8.8.8
@@ -50,6 +55,7 @@ services:
       # Bridge API key is read from the content overlay (config/secrets.json) by
       # docker/entrypoint.sh. Set this var in the host env only to override.
       - WHATSAPP_BRIDGE_API_KEY=${WHATSAPP_BRIDGE_API_KEY:-}
+      - SOPS_AGE_KEY_FILE=/home/claude/.config/sops/age/keys.txt
     ports:
       - "${WA_BRIDGE_PORT:-8080}:8080"
       - "${WA_WEBHOOK_PORT:-8769}:8769"

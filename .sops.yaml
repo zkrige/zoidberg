@@ -1,0 +1,9 @@
+# Recipients: mac (this laptop), pi (orangepi5 root), recovery (offline, printed).
+# Losing one machine key loses nothing; the other two still decrypt.
+# Add or rotate a recipient here, then run: sops updatekeys <file>
+creation_rules:
+  - path_regex: (credentials|secrets)\.json$
+    age: >-
+      age17x0u2e7x4qv284ccwpz750zzl28akj2dnsl5rpj826suhdv939aq7j68gx,
+      age1j3mu0038wwww57e2jnr5yjnp5z8ytye08upaxqdd60v7d2wnrpgse856hd,
+      age1gex5nywjmwz0hl8j3fmty6fhggpavz5hedckstu2pex5vqkkmerqaz34dz

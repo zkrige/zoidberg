@@ -31,11 +31,29 @@ fi
 # ---------------------------------------------------------------------------
 BACKUP_DIR=/app/store/volume-backup
 
-# Restore credentials.json if missing (fresh volume)
-if [ ! -f ~/.claude/config/credentials.json ] && [ -f "$BACKUP_DIR/credentials.json" ]; then
+# Restore credentials if missing (fresh volume).
+# Prefer the SOPS-encrypted store: the host keeps only ciphertext, and the
+# plaintext exists solely inside this container. Falls back to the plaintext
+# copy so an age-key problem cannot take the bot down.
+if [ ! -f ~/.claude/config/credentials.json ]; then
   mkdir -p ~/.claude/config
-  cp "$BACKUP_DIR/credentials.json" ~/.claude/config/credentials.json
-  echo "[entrypoint] Restored credentials.json from host backup"
+  if { [ -n "$SOPS_AGE_KEY" ] || [ -r "$SOPS_AGE_KEY_FILE" ]; } \
+     && [ -f "$BACKUP_DIR/credentials.enc.json" ] \
+     && command -v sops >/dev/null; then
+    if sops decrypt "$BACKUP_DIR/credentials.enc.json" \
+         > ~/.claude/config/credentials.json 2>/dev/null; then
+      chmod 600 ~/.claude/config/credentials.json
+      echo "[entrypoint] Restored credentials.json from SOPS store"
+    else
+      rm -f ~/.claude/config/credentials.json
+      echo "[entrypoint] WARNING: sops decrypt failed" >&2
+    fi
+  fi
+  if [ ! -s ~/.claude/config/credentials.json ] && [ -f "$BACKUP_DIR/credentials.json" ]; then
+    cp "$BACKUP_DIR/credentials.json" ~/.claude/config/credentials.json
+    chmod 600 ~/.claude/config/credentials.json
+    echo "[entrypoint] Restored credentials.json from plaintext host backup"
+  fi
 fi
 
 # Restore Claude auth if missing (fresh volume)
