@@ -31,25 +31,32 @@ fi
 # ---------------------------------------------------------------------------
 BACKUP_DIR=/app/store/volume-backup
 
-# Restore credentials if missing (fresh volume) from the SOPS-encrypted store.
-# No plaintext fallback: the only plaintext copy on this host was a stale
-# 3-of-18-entry file, and silently handing the bot a partial credential set is
-# worse than not starting. Fail loudly instead.
-if [ ! -f ~/.claude/config/credentials.json ] && [ -f "$BACKUP_DIR/credentials.enc.json" ]; then
+# Sync credentials from the SOPS-encrypted store on every start, not only on a
+# fresh volume. A stale copy in the volume is how the container ended up running
+# 3 of 18 credentials for months without anything reporting a problem.
+# No plaintext fallback: a partial credential set that starts is worse than a
+# loud failure, so decrypt errors abort the container.
+if [ -f "$BACKUP_DIR/credentials.enc.json" ]; then
   mkdir -p ~/.claude/config
   if ! command -v sops >/dev/null; then
     echo "[entrypoint] FATAL: sops not on PATH; cannot decrypt credentials" >&2
     exit 1
   fi
-  if ! sops decrypt "$BACKUP_DIR/credentials.enc.json" \
-       > ~/.claude/config/credentials.json; then
-    rm -f ~/.claude/config/credentials.json
+  if ! sops decrypt "$BACKUP_DIR/credentials.enc.json" > /tmp/creds.$$; then
+    rm -f /tmp/creds.$$
     echo "[entrypoint] FATAL: sops decrypt failed. Check that" \
          "SOPS_AGE_KEY_FILE ($SOPS_AGE_KEY_FILE) is readable by uid $(id -u)." >&2
     exit 1
   fi
+  if ! python3 -c 'import json,sys; json.load(open(sys.argv[1]))' /tmp/creds.$$; then
+    rm -f /tmp/creds.$$
+    echo "[entrypoint] FATAL: decrypted credentials are not valid JSON" >&2
+    exit 1
+  fi
+  mv /tmp/creds.$$ ~/.claude/config/credentials.json
   chmod 600 ~/.claude/config/credentials.json
-  echo "[entrypoint] Restored credentials.json from SOPS store"
+  echo "[entrypoint] Synced credentials.json from SOPS store" \
+       "($(python3 -c 'import json,os;print(len(json.load(open(os.path.expanduser("~/.claude/config/credentials.json")))))') entries)"
 fi
 
 # Restore Claude auth if missing (fresh volume)
