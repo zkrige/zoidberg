@@ -31,29 +31,25 @@ fi
 # ---------------------------------------------------------------------------
 BACKUP_DIR=/app/store/volume-backup
 
-# Restore credentials if missing (fresh volume).
-# Prefer the SOPS-encrypted store: the host keeps only ciphertext, and the
-# plaintext exists solely inside this container. Falls back to the plaintext
-# copy so an age-key problem cannot take the bot down.
-if [ ! -f ~/.claude/config/credentials.json ]; then
+# Restore credentials if missing (fresh volume) from the SOPS-encrypted store.
+# No plaintext fallback: the only plaintext copy on this host was a stale
+# 3-of-18-entry file, and silently handing the bot a partial credential set is
+# worse than not starting. Fail loudly instead.
+if [ ! -f ~/.claude/config/credentials.json ] && [ -f "$BACKUP_DIR/credentials.enc.json" ]; then
   mkdir -p ~/.claude/config
-  if { [ -n "$SOPS_AGE_KEY" ] || [ -r "$SOPS_AGE_KEY_FILE" ]; } \
-     && [ -f "$BACKUP_DIR/credentials.enc.json" ] \
-     && command -v sops >/dev/null; then
-    if sops decrypt "$BACKUP_DIR/credentials.enc.json" \
-         > ~/.claude/config/credentials.json 2>/dev/null; then
-      chmod 600 ~/.claude/config/credentials.json
-      echo "[entrypoint] Restored credentials.json from SOPS store"
-    else
-      rm -f ~/.claude/config/credentials.json
-      echo "[entrypoint] WARNING: sops decrypt failed" >&2
-    fi
+  if ! command -v sops >/dev/null; then
+    echo "[entrypoint] FATAL: sops not on PATH; cannot decrypt credentials" >&2
+    exit 1
   fi
-  if [ ! -s ~/.claude/config/credentials.json ] && [ -f "$BACKUP_DIR/credentials.json" ]; then
-    cp "$BACKUP_DIR/credentials.json" ~/.claude/config/credentials.json
-    chmod 600 ~/.claude/config/credentials.json
-    echo "[entrypoint] Restored credentials.json from plaintext host backup"
+  if ! sops decrypt "$BACKUP_DIR/credentials.enc.json" \
+       > ~/.claude/config/credentials.json; then
+    rm -f ~/.claude/config/credentials.json
+    echo "[entrypoint] FATAL: sops decrypt failed. Check that" \
+         "SOPS_AGE_KEY_FILE ($SOPS_AGE_KEY_FILE) is readable by uid $(id -u)." >&2
+    exit 1
   fi
+  chmod 600 ~/.claude/config/credentials.json
+  echo "[entrypoint] Restored credentials.json from SOPS store"
 fi
 
 # Restore Claude auth if missing (fresh volume)
