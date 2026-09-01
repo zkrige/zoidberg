@@ -41,6 +41,7 @@ services:
       # keeps only ciphertext plus the key; plaintext lives in the container.
       - /usr/local/bin/sops:/usr/local/bin/sops:ro
       - /etc/zoidberg/age-key.txt:/run/age-key.txt:ro
+      - /opt/zoidberg/docker/entrypoint.sh:/entrypoint.sh:ro
     dns:
       - 1.1.1.1
       - 8.8.8.8
