@@ -165,3 +165,23 @@ if [ -d "$CONTENT_PATH/.git" ]; then
     echo "[self-update] $(date): content sync complete"
   fi
 fi
+
+# --- Secret store (ciphertext mirror; decrypted inside the container) ---
+if [ -n "${SECRET_STORE_REPO:-}" ]; then
+  SECRET_SRC="$SECRET_STORE_PATH/$SECRET_STORE_FILE"
+  SECRET_DEST="$REPO_PATH/store/volume-backup/credentials.enc.json"
+  if secret_store_mirror "$SECRET_STORE_REPO" "$SECRET_STORE_FILE" "$SECRET_STORE_PATH"; then
+    if secret_store_changed "$SECRET_SRC" "$SECRET_DEST"; then
+      echo "[self-update] secret store changed, syncing credentials into the container"
+      mkdir -p "$(dirname "$SECRET_DEST")"
+      cp "$SECRET_SRC" "$SECRET_DEST"
+      chmod 600 "$SECRET_DEST"
+      maybe_chown 1000:1000 "$SECRET_DEST"
+      docker exec zoidberg bash /app/docker/sync-secret-store.sh 2>&1 \
+        || echo "[self-update] WARN: in-container credential sync failed; the entrypoint retries at next start"
+      echo "[self-update] $(date): secret store sync complete"
+    fi
+  else
+    echo "[self-update] WARN: secret store mirror failed for $SECRET_STORE_REPO"
+  fi
+fi

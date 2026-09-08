@@ -61,6 +61,10 @@ curl -fsSL https://raw.githubusercontent.com/zkrige/zoidberg/main/install.sh | R
 Your config and skills directories default to siblings of it, the installer
 records all three in the repo's `.env`, and docker compose reads that. No file
 needs editing. `CONTENT_PATH` and `SKILLS_PATH` move those two independently.
+Keep your API credentials as a SOPS + age encrypted `credentials.enc.json` in a
+private git repo and set `SECRET_STORE_REPO` in `.env`: the deploy cron mirrors
+it and re-decrypts inside the container whenever it changes, so rotating a
+token is edit, commit, push.
 
 Voice-note transcription is built into the image and needs no account or API
 key. It defaults to whisper's multilingual `base` model, which is a reasonable

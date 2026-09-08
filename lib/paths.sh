@@ -127,11 +127,33 @@ resolve_host_paths() {
   local parent; parent="$(dirname "$REPO_PATH")"
   : "${CONTENT_PATH:=${parent}/zoidberg-config}"
   : "${SKILLS_PATH:=${parent}/claude-skills}"
-  export REPO_PATH CONTENT_PATH SKILLS_PATH
+  : "${SECRET_STORE_PATH:=${parent}/zoidberg-secret-store}"
+  : "${SECRET_STORE_FILE:=credentials.enc.json}"
+  export REPO_PATH CONTENT_PATH SKILLS_PATH SECRET_STORE_PATH SECRET_STORE_FILE
   path_check REPO_PATH    "$REPO_PATH"    || return 1
   path_check CONTENT_PATH "$CONTENT_PATH" || return 1
   path_check SKILLS_PATH  "$SKILLS_PATH"  || return 1
+  path_check SECRET_STORE_PATH "$SECRET_STORE_PATH" || return 1
   return 0
+}
+
+secret_store_mirror() {
+  local url="$1" file="$2" dir="$3"
+  if [ ! -d "$dir/.git" ]; then
+    git clone --quiet --depth 1 --no-checkout "$url" "$dir" || return 1
+    git -C "$dir" sparse-checkout set --no-cone "/$file" || return 1
+    git -C "$dir" checkout --quiet || return 1
+  else
+    git -C "$dir" fetch --quiet --depth 1 origin HEAD || return 1
+    git -C "$dir" reset --quiet --hard FETCH_HEAD || return 1
+  fi
+  [ -f "$dir/$file" ]
+}
+
+secret_store_changed() {
+  local src="$1" dest="$2"
+  [ -f "$src" ] || return 1
+  ! cmp -s "$src" "$dest"
 }
 
 # detect_ssh_key - docker-compose.yml bind-mounts a host key in for git over

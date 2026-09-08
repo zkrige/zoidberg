@@ -207,6 +207,7 @@ comes from the session's own turns, not a re-pasted transcript.
 - `scripts/self-update.sh` - host-cron git-driven deploy (pull + reload/rebuild + skills + content sync)
 - `scripts/scheduled-restart.sh` - host-cron daily container restart (tmux/auth/session hygiene), deferred while a Telegram turn or a cron task is in flight
 - `docker/entrypoint.sh` - container startup (auth check, git config, `exec scheduler.sh`)
+- `docker/sync-secret-store.sh` - in-container decrypt of `store/volume-backup/credentials.enc.json` into `~/.claude/config/credentials.json` and `/app/store/credentials.json`; run by the entrypoint at every start and by `scripts/self-update.sh` when the mirrored ciphertext changes
 - `docker/transcribe` - voice-note transcription (`transcribe <audio-file>` → transcript on stdout), wrapping the whisper.cpp binary baked into the image
 - `install.sh` - one-command bootstrap: prerequisites, clone, content overlay, then `setup.sh run`
 - `setup.sh` - deterministic setup dispatcher: usage text, output helpers, path resolution, `json_write`, `ask`, and the subcommand `case`
@@ -252,7 +253,10 @@ paths are pinned in `.env` at the repo root, written by `env_write_defaults`
 project name would come from the directory basename and namespace the
 `claude-home` and `wa-bridge-store` named volumes) and a detected
 `SSH_KEY_PATH`. The writer only ever ADDS missing keys; an existing value is
-never rewritten.
+never rewritten. Three optional keys turn on the secret-store mirror (Deployment
+step 6): `SECRET_STORE_REPO` (git URL; absent means off), `SECRET_STORE_FILE`
+(path inside that repo, default `credentials.enc.json`) and `SECRET_STORE_PATH`
+(host clone, default a `zoidberg-secret-store` sibling of the repo).
 
 Host-side names are `*_PATH`; `*_DIR` is the in-container spelling and a
 different thing. `REPO_DIR`/`CONTENT_DIR`/`SKILLS_DIR` still work as host-side
@@ -301,6 +305,7 @@ Deploy is git-driven via a host cron every 5 minutes (`scripts/self-update.sh`):
 3. Elif this run pulled and `watchers/`, `lib/*.sh` or `lib/channels/` changed → `docker kill --signal=HUP zoidberg`. (`lib/channels/` counts because the bot-channel MCP server is launched by the session: without a respawn the new file is on disk and the old server keeps running.) The SIGHUP re-execs the scheduler, which runs every plugin `_cleanup` (killing the tmux session) then re-inits and respawns the session with its new launch args and clean context.
 4. Else (agents/scripts/docs) → no reload; those are read fresh at dispatch.
 5. It also syncs the skills repo and the content repo (mirror sync blocks: fetch, stash-pull-pop if the mount has local edits, run `setup.sh` if present) and runs their setup scripts. A content pull that touched `agents/` also SIGHUPs: the session system prompt is assembled at spawn from the framework prompts plus `config/agents/*.local.txt`, so a prompt edit is invisible to the running session until it respawns. Task prompts and `config/scripts/` are read fresh at dispatch and trigger nothing.
+6. Secret store, when `SECRET_STORE_REPO` is set in `.env`: sparse-mirror that git repo into `SECRET_STORE_PATH` (only `SECRET_STORE_FILE`, default `credentials.enc.json`, is checked out; `secret_store_mirror` in `lib/paths.sh`). When the mirrored ciphertext differs from `store/volume-backup/credentials.enc.json` (`secret_store_changed`) it is copied there (mode 600, uid 1000) and `docker exec zoidberg bash /app/docker/sync-secret-store.sh` decrypts it in place. No respawn: scheduled tasks and skills read the plaintext with `jq` at call time. The store is SOPS + age ciphertext, so a private repo can hold it; the container decrypts with the age key `docker-compose.yml` mounts at `/run/age-key.txt`. Rotating a credential is therefore: edit the store, commit, push; the host applies it within 5 minutes. `tests/secret_store_sync.sh` covers the mirror and change detection, `tests/secret_store_decrypt.sh` the in-container script (skips without `sops` and `age-keygen`).
 
 So a `git push` to `main` is the entire deploy - the host applies it within 5
 minutes. The bot also auto-pushes its own changes; `autoupdate.sh` is an

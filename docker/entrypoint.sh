@@ -31,33 +31,7 @@ fi
 # ---------------------------------------------------------------------------
 BACKUP_DIR=/app/store/volume-backup
 
-# Sync credentials from the SOPS-encrypted store on every start, not only on a
-# fresh volume. A stale copy in the volume is how the container ended up running
-# 3 of 18 credentials for months without anything reporting a problem.
-# No plaintext fallback: a partial credential set that starts is worse than a
-# loud failure, so decrypt errors abort the container.
-if [ -f "$BACKUP_DIR/credentials.enc.json" ]; then
-  mkdir -p ~/.claude/config
-  if ! command -v sops >/dev/null; then
-    echo "[entrypoint] FATAL: sops not on PATH; cannot decrypt credentials" >&2
-    exit 1
-  fi
-  if ! sops decrypt "$BACKUP_DIR/credentials.enc.json" > /tmp/creds.$$; then
-    rm -f /tmp/creds.$$
-    echo "[entrypoint] FATAL: sops decrypt failed. Check that" \
-         "SOPS_AGE_KEY_FILE ($SOPS_AGE_KEY_FILE) is readable by uid $(id -u)." >&2
-    exit 1
-  fi
-  if ! python3 -c 'import json,sys; json.load(open(sys.argv[1]))' /tmp/creds.$$; then
-    rm -f /tmp/creds.$$
-    echo "[entrypoint] FATAL: decrypted credentials are not valid JSON" >&2
-    exit 1
-  fi
-  mv /tmp/creds.$$ ~/.claude/config/credentials.json
-  chmod 600 ~/.claude/config/credentials.json
-  echo "[entrypoint] Synced credentials.json from SOPS store" \
-       "($(python3 -c 'import json,os;print(len(json.load(open(os.path.expanduser("~/.claude/config/credentials.json")))))') entries)"
-fi
+bash /app/docker/sync-secret-store.sh
 
 # Restore Claude auth if missing (fresh volume)
 if [ ! -f ~/.claude/.credentials.json ] && [ -f "$BACKUP_DIR/claude-credentials.json" ]; then
@@ -146,7 +120,6 @@ if ls /home/claude/.claude/skills/*/SKILL.md >/dev/null 2>&1; then
 fi
 
 # Copy configs into /app/store so scheduled tasks can read them (sandbox restricts to /app)
-[ -f ~/.claude/config/credentials.json ] && cp ~/.claude/config/credentials.json /app/store/credentials.json 2>/dev/null || true
 [ -f ~/.claude/skills/yti/config.json ] && cp ~/.claude/skills/yti/config.json /app/store/yti-config.json 2>/dev/null || true
 
 # Pre-flight for interactive Claude session (channels architecture)
