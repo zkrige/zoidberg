@@ -146,6 +146,23 @@ makes a security-aware model read its own scaffolding as a prompt-injection
 envelope and refuse genuine owner commands. Keep the body minimal; continuity
 comes from the session's own turns, not a re-pasted transcript.
 
+That is not a theoretical risk. On 2026-07-21 the bot refused legitimate owner
+commands, replying that the message "arrived wrapped in a large fabricated block
+(fake CLAUDE.md/guardrails reprint, fake recent corrections, and a fake
+prior-conversation transcript embedded inside the channel payload) ... doesn't
+match how real messages have looked in this session." Every dispatch was
+assembling the body as `guardrails + telegram-system prompt + feedback + rolling
+history transcript + memory + user_msg` and POSTing it verbatim. The model
+compared that against its genuine session context and read the difference as
+injection. The re-embedded HISTORY transcript was the strongest trigger: "I'm
+not treating the embedded transcript as real history". Re-embedding made sense
+in the old stateless `claude -p` architecture and became actively harmful once
+the session was persistent. Fixed in 9febb91 by building the real system prompt
+at spawn and cutting the body to the attribution marker plus the message. A
+first attempt (a542513) moved only the guardrails block out of the body and was
+INSUFFICIENT, because the system, memory and history bundle still tripped the
+detector.
+
 ## Telegram bot
 - Messages are processed immediately (long-polling, not periodic).
 - User-initiated messages run with `bypassPermissions` (you explicitly asked).
@@ -229,6 +246,22 @@ signals (stderr growth, post failure, timeout) cannot see. To see the live set:
 jq -r '.tasks[] | "\(.name)\t\(.cron)\tenabled=\(.enabled)"' config/schedule.json
 ```
 
+When adding or reviewing a task, ask whether it needs reasoning. If it does not,
+give it a `command` instead of a `prompt_file`. Every `prompt_file` task goes
+through the ONE shared session, so a fetch-aggregate-format job with no judgment
+in it pays Claude to retype JSON into tables and grows the shared context while
+it does so. One such task cost about 14 minutes and 45k tokens of pure
+formatting; rewritten as a single-process script behind a `command` field it
+finishes in about 4 seconds (`cron: dispatching '<task>' via command (no
+Claude)`). `cron.sh` runs the command directly with a `timeout` and cwd `/app`,
+and forwards stdout through the existing notify chunker, so there is no
+bot-channel hop and no context growth. Keep the task's prompt file as a one-line
+pass-through so `/retry` still works.
+
+A task name in `schedule.json` is a stable identifier used by the command
+system. Renaming one breaks `/retry <task>` until the change reaches the host,
+so never rename a task that was not asked about.
+
 ## Deployment
 Production is a Docker container (`zoidberg`, scheduler = PID 1) on a Linux
 host. The repo is bind-mounted `${REPO_PATH:-.}` → `/app`; the skills repo
@@ -242,7 +275,11 @@ chowns `/app/config/secrets.json` (the bind-mount may land root-owned). If the
 overlay contains a `firebase-tools.json` (a logged-in Firebase CLI
 configstore), the entrypoint installs it to `~/.config/configstore/` on every
 start; `firebase-tools` needs real CLI login state (gcloud ADC is rejected)
-and `~/.config` is container-local, wiped on rebuild.
+and `~/.config` is container-local, wiped on rebuild. If `npx firebase-tools
+mcp` fails with `Invalid Version:` and an empty version, the cause is a
+half-written `~/.npm/_npx/<hash>` install: package directories with no
+`package.json`, on which Arborist's dedupe throws. Delete that one cache
+directory and re-run.
 
 ### Host paths and `.env`
 Compose's relative defaults resolve against the compose file's directory, so
@@ -301,7 +338,7 @@ disabled payloads. The gates keep the image clean, not the build fast.
 
 Deploy is git-driven via a host cron every 5 minutes (`scripts/self-update.sh`):
 1. `git fetch`; if behind, stash local bot edits, `git pull --ff-only`, pop.
-2. Rebuild gate, checked on EVERY run (not only when this script pulled): if `Dockerfile`/`docker/`/`docker-compose.yml` changed since the commit recorded in `state/.deployed-build-commit` (the commit the running image was built from; `deploy_rebuild_needed` in `lib/paths.sh`, `tests/deploy_gate.sh`) → `docker compose up -d --build --force-recreate`, record the new commit, then `docker image prune -f` to drop the 2.27GB image the retag just orphaned (dangling only, never `-a`). Gating on the marker instead of the pull catches commits born in the container's own bind-mounted tree (the bot commits and pushes, so HEAD is already at origin/main when the cron looks).
+2. Rebuild gate, checked on EVERY run (not only when this script pulled): if `Dockerfile`/`docker/`/`docker-compose.yml` changed since the commit recorded in `state/.deployed-build-commit` (the commit the running image was built from; `deploy_rebuild_needed` in `lib/paths.sh`, `tests/deploy_gate.sh`) → `docker compose up -d --build --force-recreate`, record the new commit, then `docker image prune -f` to drop the 2.27GB image the retag just orphaned (dangling only, never `-a`). Gating on the marker instead of the pull catches commits born in the container's own bind-mounted tree (the bot commits and pushes, so HEAD is already at origin/main when the cron looks). On 2026-08-13 the bot committed a Dockerfile change inside the bind-mounted repo and pushed from there; the old `HEAD != origin/main` gate saw them equal and never rebuilt, so the change sat unbuilt for an hour while the bot reported "still building" (commits 3758340, 5525781). The marker is seeded from the PRE-pull commit, and a marker sha the repo does not recognise forces a conservative rebuild. `scripts/self-update.sh` takes a `flock` singleton because the marker only lands after the build finishes, so overlapping 5-minute ticks would otherwise double-build. A quiet, up-to-date run logs NOTHING, so an idle log is normal rather than a stalled cron.
 3. Elif this run pulled and `watchers/`, `lib/*.sh` or `lib/channels/` changed → `docker kill --signal=HUP zoidberg`. (`lib/channels/` counts because the bot-channel MCP server is launched by the session: without a respawn the new file is on disk and the old server keeps running.) The SIGHUP re-execs the scheduler, which runs every plugin `_cleanup` (killing the tmux session) then re-inits and respawns the session with its new launch args and clean context.
 4. Else (agents/scripts/docs) → no reload; those are read fresh at dispatch.
 5. It also syncs the skills repo and the content repo (mirror sync blocks: fetch, stash-pull-pop if the mount has local edits, run `setup.sh` if present) and runs their setup scripts. A content pull that touched `agents/` also SIGHUPs: the session system prompt is assembled at spawn from the framework prompts plus `config/agents/*.local.txt`, so a prompt edit is invisible to the running session until it respawns. Task prompts and `config/scripts/` are read fresh at dispatch and trigger nothing.
@@ -364,6 +401,264 @@ alter a documented workflow - update the docs that describe it in the SAME chang
 - Verify every doc claim against the code before writing it (file:line, real command output, actual config). The "Never Guess" rule applies to docs - a doc is a load-bearing assertion.
 - If a doc names a file, command, plugin, endpoint, or task that was renamed or removed, fix or delete the reference. Keep inventories (Key files, Commands, Scheduled tasks) matched to what is on disk.
 - A change is not complete until CLAUDE.md, README.md, and any `docs/` pages the change touches are correct.
+
+## Features are opt-in
+
+Core plugins (`claude_session`, `cron`, `autoupdate`) always load. Every other
+`watchers/plugins/*.sh` is gated on `.features.<name>` in the operator's
+`config.json` (`feature_enabled` in `lib/common.sh`, `CORE_PLUGINS` in
+`watchers/scheduler.sh`). Unlisted means OFF, except `telegram`, which defaults
+ON so pre-existing installs keep their interface. A disabled plugin is never
+sourced. jq's `//` operator treats `false` as absent, so the lookup tests the key
+with `has()` first: a naive `// "true"` silently re-enables a feature the
+operator explicitly disabled. The full model is in `docs/ARCHITECTURE.md` ("The
+feature model"), the
+six-step procedure for adding one is `docs/features/README.md`, per-feature docs
+live in `docs/features/<name>.md`, and `tests/feature_gate.sh` covers the gate.
+
+A SIGHUP reload is not instant. It can take well over 18 seconds to reach
+`scheduler: daemon started`. Poll for that line rather than sleeping a fixed
+interval.
+
+## Install is two stages
+
+`install.sh` does only deterministic bootstrap: prerequisite detection (offered,
+never forced), clone, seeding the overlay from `examples/content/`, creating the
+mount points, and generating a random bridge key. It does not build, start, or
+touch Telegram. `setup.sh run` drives the resumable sequence, and the `/setup`
+skill (`.claude/skills/setup/SKILL.md`) runs in the operator's own Claude for
+the judgment work: BotFather guidance, chat_id discovery through `getUpdates`,
+config authoring, schedule authoring, the container build, the one-time
+in-container OAuth, host cron entries, and end-to-end verification. Do not spawn
+a second Claude on the host for this; the bot's own session authors the
+schedule after the installer messages the owner to reply `/setup`.
+
+Verification is mandatory, not optional. `docker/entrypoint.sh` hard-fails on
+nothing, so a misconfigured install looks healthy while the session 401s
+forever.
+
+## Session auth expiry
+
+When every Claude task hangs at once (Telegram replies hitting the 1200s wall,
+cron tasks timing out, nothing completing), check the session's OAuth
+credentials before looking at any individual task.
+
+`claude auth status` is useless here. It reports `loggedIn: true` while every
+call returns 401. The authoritative signal is the transcript: the newest
+assistant record carries `isApiErrorMessage: true` with the text
+`Login expired · Please run /login`. `_claude_session_auth_expired`
+(`watchers/plugins/claude_session.sh:418`) reads that record, and
+`claude_session_check_auth` sends a debounced Telegram alert on it each tick.
+Rendered pane content cannot forge a transcript record, which is why the check
+lives there instead of in a pane grep (622dd6e). The auth code is redacted from
+logs.
+
+The access token lasts about 8 hours and refreshes itself. When the refresh
+token dies, `.credentials.json` `expiresAt` sits in the past and everything 401s
+until re-login. The fix needs no shell access: send `/login` in Telegram,
+approve the URL the bot returns, then reply `/login <code>`. The handler
+validates the new `expiresAt` and respawns the session, which is required
+because the running session caches the dead token in memory. `/login` is a slash
+command, so it bypasses the dead session.
+
+## Context window and the 1M flag
+
+`CLAUDE_CODE_DISABLE_1M_CONTEXT` is unset, and should stay unset.
+
+On 2026-06-04 the interactive session hard-failed every dispatch with the literal
+pane text `Usage credits required for 1M context`. Setting
+`CLAUDE_CODE_DISABLE_1M_CONTEXT=1` (commit d8460ce) forced a 200k window and
+fixed it. That ran on a Sonnet 4.6-era model, which gates the 1M tier on usage
+credits. Sonnet 5 has no such gate: it gets 1M context natively, with automatic
+compaction near 967k tokens. Commit f37d319 removed the flag on 2026-07-25, and
+a live check on 2026-08-01 found zero occurrences of `credits`, `1M context`,
+`hang` or `hung` across 23,351 log lines, zero container restarts, zero OOM
+kills, and a healthy idle session. `claude_session_maybe_clear`, a manual
+`/clear` at 120k tokens, was deleted at the same time as redundant.
+
+An earlier claim that auto-compaction is gated off in non-interactive or
+tmux-piped delivery is RETRACTED. It was an inference chained onto the
+credits-gate finding. No commit or log ever isolated compaction behaviour in
+this delivery mode, and the seven clean days contradict it.
+
+A second incident on 2026-07-01 (commits cafea74, a1949ba) is separate and still
+unexplained. Removing the flag brought the session up idle with no error banner,
+yet every channel request hung at low context. Restoring the flag fixed it
+within 11 minutes. That is a different symptom from the credits-gate failure: no
+banner, hung instead of rejected, at low context. Do not assume it was the same
+root cause or a compaction failure. It has not recurred.
+
+If either symptom returns, a literal credits banner or a silent hang at any
+context size, re-add `CLAUDE_CODE_DISABLE_1M_CONTEXT=1` to the compose
+environment as the first response, and treat the recurrence as new evidence
+rather than proof the original fix was right.
+
+Diagnostic signature: `logs/automations.log` fills with
+`bot_channel_wait_reply: timeout`. Confirm by reading the session screen,
+`docker exec zoidberg tmux capture-pane -t zoidberg -p`. Every automation shares
+ONE session, so context only grows between resets and a retry storm makes a jam
+worse: once jammed, failed tasks keep being re-dispatched and each one adds more
+context. `self-evolve` is rate-limited to once per `.evolution.cooldown_seconds`
+(default 10800, three hours, `lib/evolution.sh:40`) for that reason.
+
+## Scrape chrome, never content
+
+On 2026-07-26 the bot stopped answering Telegram. `claude_session_is_busy`
+grepped the ENTIRE tmux pane for `esc to interrupt`. `state/memory.md` quoted
+that exact phrase, the memory-prune turn rendered the file as a diff into the
+pane, and the grep matched its own documentation. The session reported busy
+forever while it sat idle.
+
+Everything gated on that check died silently. The Telegram idle-fallback in
+`lib/telegram-run.sh` never reached `idle_streak` 2, so neither the reply-nudge
+nor the transcript salvage fired, and every dispatch burned the full 1200s
+`CLAUDE_WALL_TIMEOUT`. `claude_session_maybe_clear` deferred `/clear` forever.
+`claude_session_apply_pending_model` never applied a deferred model switch. It
+recurred every 15 exchanges, because that is when memory-prune runs.
+
+Fixed in 4fb6cf4: scrape only the last two pane lines, the footer and the input
+border, never conversation content. `tests/session_is_busy.sh` is the regression
+test.
+
+A pane scrape has three correct shapes, chosen by where the signal lives:
+1. Fixed chrome, such as the busy footer. Bind to that region: `tail -n 2`.
+2. Recorded structurally somewhere else. Read that instead, which is what the
+   auth check does with the transcript's `isApiErrorMessage` record.
+3. On screen only, such as an unanswered option picker. It must be scraped, so
+   assemble the pattern from fragments to keep the literal out of the file.
+   `tests/session_self_match.sh` uses `claude_session.sh`'s own source as a
+   negative fixture and asserts no grepped literal appears in it. It immediately
+   caught an explanatory comment reintroducing one.
+
+A bot that writes documentation about its own internals into a file it later
+renders on screen will feed its own scrapers. Any heuristic that greps a
+rendered surface for a control string is one doc update away from breaking.
+
+Diagnostic note: the container clock is UTC while the host may run local time,
+so `logs/automations.log` can read hours behind wall time. That is not a frozen
+log.
+
+## WhatsApp bridge
+
+The bridge (whatsmeow-based, `docker/whatsapp-bridge-src/`) was re-vendored from
+upstream `FelixIsaac/whatsapp-mcp-extended` at tag v0.3.0 (commit de0bd63) on
+2026-07-08. Upstream force-pushes its history, so always pin a SHA or a tag,
+never track a branch. Provenance and the local patch list are in
+`docker/whatsapp-bridge-src/UPSTREAM.md`, which makes the next convergence
+mechanical: re-vendor pristine, then re-apply the listed patches (the flag shim
+for `-store-dir` and `-listen`, the `/tmp/whatsapp-media` download dir, and the
+`AUTO_DOWNLOAD_MEDIA` gate defaulting off).
+
+`docker/whatsapp-mcp-server` is deliberately NOT converged. It is a structural
+rewrite, a `lib/` REST-client split against upstream's 2359-line direct-DB
+monolith. Treat it as our own fork and port individual upstream tools on demand.
+
+### Webhook dispatch
+Instant dispatch (webhook to the `whatsapp.sh` listener to
+`lib/whatsapp-dispatch.sh`) had never worked until 2026-07-08. `webhook_logs`
+had zero rows and `could not reach bridge API` appeared 113 times in
+`automations.log`. Two independent causes:
+1. The plugin's `GET` and `POST /api/webhooks` curls sent no `X-API-Key`, and
+   the bridge has enforced auth since the Docker migration. Fixed in e736792.
+2. Upstream v0.3.0 added an SSRF guard rejecting webhook URLs on private or
+   loopback addresses, and our listener is `127.0.0.1` in the same container by
+   design. Fixed with `export DISABLE_SSRF_CHECK=true` in
+   `docker/entrypoint.sh:70`, upstream's own escape hatch
+   (`internal/webhook/validation.go:60`).
+
+The plugin conflates 401 with unreachable (`curl -f`), so the failure was silent
+for months. Verify any bridge change by checking for `webhook_logs` ROWS, not
+the registration log line. An end-to-end test needs a self-chat message from a
+DIFFERENT linked device: a message sent through the bridge's own `/api/send`
+does not loop back through its inbound handler.
+
+### Re-pairing
+Two failure modes show up:
+1. `[Client WARN] Keepalive timed out`, then `KeepAlive: 3 consecutive failures,
+   forcing disconnect+reconnect`, then `lookup web.whatsapp.com: no such host`,
+   then `Disconnecting...`. DNS broke.
+2. `Got 401: logged out from another device connect failure, sending LoggedOut
+   event and deleting session`, then `Device logged out - please scan QR code to
+   log in again`. The session was invalidated server-side, by another device
+   claiming the slot or by expiry. The bridge keeps running but the session file
+   under `store/` is purged.
+
+The bridge does not fall back to QR pairing mid-process after a 401. It needs a
+fresh process start with no valid session in `store/` before the QR prints. The
+entrypoint starts it as a background process, so if it dies the container stays
+up and nothing respawns it. If a restart reconnects and then immediately hits
+the 401 again, kill and restart once more; the second start prints the QR.
+
+WhatsApp allows four linked devices and each bridge takes one slot, so two
+bridges can stay paired at the same time without kicking each other.
+
+## Rules that came out of failures
+
+### Ask when a short message is ambiguous
+A short message with no clear subject can mean more than one thing. Ask one
+clarifying question instead of guessing.
+
+**Why:** "another" was read as "run the stats task again" when it meant "log
+another hollow hold".
+
+**How to apply:** a short message with no clear subject gets one question before
+any action.
+
+### A system's own log is not a source
+When diagnosing why the system did something, do not treat its own log line as
+ground truth for a factual claim. The log can BE the symptom of the bug.
+
+**Why:** on 2026-07-24 a scheduled task that parses a chat leaderboard logged
+"not #1 for week 2026-W30" every day, and that log was quoted back as proof the
+rule had worked correctly. The owner pushed back: "I was 10 points ahead
+yesterday". Fetching the real leaderboard showed he was first by 12 points. The
+upstream bot had changed its format from `<@id> — N pts` to plain names, the
+parser matched 0 rows, and 0 rows renders as "not #1". The log reported what the
+code concluded, not whether the conclusion was correct.
+
+**How to apply:** verify the automation's INPUTS against the real external
+source, the actual message or API response, not its logs or state.
+
+### Validate a failure mode before designing for it
+The health probe (420fc2b) posts a synthetic channel event and respawns the
+session after two unanswered probes.
+
+**Why:** "resuming a wedged conversation could resume the wedge" was asserted as
+design rationale without reading the logs. The logs refuted it, and the
+exception it justified would have wiped context daily. Every wedge respawn
+between 2026-08-02 and 2026-08-13 fired at about 02:04 UTC, minutes after the
+daily 02:00 UTC restart. `_HEALTH_PROBE_LAST` started at 0, so the first probe
+raced the session's startup (dialog accept, MCP handshake), timed out at 25s,
+and the probe 180s later landed strike two. Zero content-caused wedges have ever
+been observed. Fixed in a996332 by arming a one-probe-interval grace in
+`claude_session_spawn` (`tests/health_probe_grace.sh`).
+
+**How to apply:** check the observed failures before writing code for a
+hypothesised one.
+
+### Keep operator facts out of the framework
+This repo is public. No hosts, IP addresses, repo URLs, credential paths, task
+names or personal names go into framework code, tests, docs or commit messages.
+Instance facts live in the private content overlay, in `config/OPERATIONS.md`.
+
+### Scrubbing history needs a repo recreate
+On 2026-07-24 this repo's history was squashed to a fresh root. A force-push
+alone does NOT remove the old objects from GitHub: the pre-rewrite commits,
+trees and blobs stayed retrievable through
+`gh api repos/.../git/commits/<old-sha>` even after `git fetch <sha>` refused
+them. Only deleting and recreating the repository, under the same name and URL
+so no remote had to change, made every old SHA return 404 or 422.
+
+### Renaming a host directory means migrating the volumes first
+The compose project name derives from the directory, so renaming the directory
+renames the named volumes. A fresh `wa-bridge-store` forces a WhatsApp QR
+re-pair. Copy the volumes with a helper container before `compose up`.
+
+### Scheduled tasks run sandboxed
+A scheduled task can only read files under `/app`, so anything it needs must be
+mounted or copied there. The shell inside the container is GNU, not BSD. Task
+prompts reach work through APIs or a clone from a remote; they never reference a
+path on the operator's workstation.
 
 ## Operator-specific deployment
 
