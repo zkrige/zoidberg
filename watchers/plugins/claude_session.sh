@@ -415,15 +415,23 @@ claude_session_apply_pending_model() {
 # assistant record counts - an older error the session has since recovered from
 # must not read as currently expired.
 # ---------------------------------------------------------------------------
+CLAUDE_CREDENTIALS_FILE="${CLAUDE_CREDENTIALS_FILE:-${HOME}/.claude/.credentials.json}"
+
+_claude_session_credentials_mtime() {
+  date -r "$CLAUDE_CREDENTIALS_FILE" +%s 2>/dev/null || echo 0
+}
+
 _claude_session_auth_expired() {
   local f last
   f=$(ls -t "${CLAUDE_PROJECT_TRANSCRIPT_DIR}"/*.jsonl 2>/dev/null | head -1)
   [ -n "$f" ] || return 1
   last=$(tail -n 200 "$f" 2>/dev/null \
-    | jq -rc 'select(.type=="assistant")
-              | if (.isApiErrorMessage==true)
-                then ([.message.content[]? | .text // ""] | join(" "))
-                else "" end' 2>/dev/null \
+    | jq -rc --argjson since "$(_claude_session_credentials_mtime)" \
+        'select(.type=="assistant")
+         | if (.isApiErrorMessage==true)
+              and ((.timestamp // "" | sub("\\.[0-9]+Z$"; "Z") | try fromdateiso8601 catch 0) >= $since)
+           then ([.message.content[]? | .text // ""] | join(" "))
+           else "" end' 2>/dev/null \
     | tail -1)
   case "$last" in *"Login expired"*) return 0 ;; esac
   return 1

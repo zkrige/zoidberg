@@ -450,8 +450,12 @@ assistant record carries `isApiErrorMessage: true` with the text
 (`watchers/plugins/claude_session.sh:418`) reads that record, and
 `claude_session_check_auth` sends a debounced Telegram alert on it each tick.
 Rendered pane content cannot forge a transcript record, which is why the check
-lives there instead of in a pane grep (622dd6e). The auth code is redacted from
-logs.
+lives there instead of in a pane grep (622dd6e). An error record older than
+the mtime of `~/.claude/.credentials.json` is ignored: after `/login` the
+session resumes with `--continue` and takes no turn until the next dispatch, so
+the pre-login 401 stays its newest assistant record and re-alerted on
+2026-09-22 two minutes after a successful login (`tests/session_self_match.sh`).
+The auth code is redacted from logs.
 
 The access token lasts about 8 hours and refreshes itself. When the refresh
 token dies, `.credentials.json` `expiresAt` sits in the past and everything 401s

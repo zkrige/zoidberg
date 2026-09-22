@@ -70,6 +70,21 @@ if ! _claude_session_auth_expired; then
   echo "FAIL auth-expired: missed a live expired-login error"; exit 1
 fi
 
+CLAUDE_CREDENTIALS_FILE="${STATE_DIR}/.credentials.json"
+touch "$CLAUDE_CREDENTIALS_FILE"
+CRED_MTIME=$(date -r "$CLAUDE_CREDENTIALS_FILE" +%s)
+iso() { jq -rn --argjson t "$1" '$t | todate | sub("Z$"; ".123Z")'; }
+printf '{"type":"assistant","isApiErrorMessage":true,"timestamp":"%s","message":{"role":"assistant","content":[{"type":"text","text":"Login expired · Please run /login"}]}}\n' \
+  "$(iso $((CRED_MTIME - 120)))" > "$T"
+if _claude_session_auth_expired; then
+  echo "FAIL auth-stale: pre-login error reported expired after credentials were rewritten"; exit 1
+fi
+printf '{"type":"assistant","isApiErrorMessage":true,"timestamp":"%s","message":{"role":"assistant","content":[{"type":"text","text":"Login expired · Please run /login"}]}}\n' \
+  "$(iso $((CRED_MTIME + 120)))" >> "$T"
+if ! _claude_session_auth_expired; then
+  echo "FAIL auth-post-login: missed an error newer than the credentials"; exit 1
+fi
+
 # --- invariant: no pane-grepped literal may appear in the plugin source ------
 # Guards against a future edit reintroducing a literal pattern.
 for lit in 'Enter to select' 'Esc to cancel'; do
