@@ -447,7 +447,7 @@ credentials before looking at any individual task.
 call returns 401. The authoritative signal is the transcript: the newest
 assistant record carries `isApiErrorMessage: true` with the text
 `Login expired · Please run /login`. `_claude_session_auth_expired`
-(`watchers/plugins/claude_session.sh:418`) reads that record, and
+(`watchers/plugins/claude_session.sh:424`) reads that record, and
 `claude_session_check_auth` sends a debounced Telegram alert on it each tick.
 Rendered pane content cannot forge a transcript record, which is why the check
 lives there instead of in a pane grep (622dd6e). An error record older than
