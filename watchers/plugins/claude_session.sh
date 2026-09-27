@@ -620,7 +620,7 @@ claude_session_health_probe() {
   default_model=$(_claude_session_persisted_model)
   default_effort=$(_claude_session_persisted_effort)
   if [ "$probe_model" != "$default_model" ] || [ "$probe_effort" != "$default_effort" ]; then
-    if flock -w "$MODEL_SWITCH_LOCK_TIMEOUT" 8; then
+    if flock -n 8; then
       claude_session_switch_model "$probe_model" "$probe_effort" "$default_model" "$default_effort"
       _HEALTH_PROBE_SWITCHED=1
       _HEALTH_PROBE_MODEL="$probe_model"

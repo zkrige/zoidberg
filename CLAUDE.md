@@ -293,9 +293,19 @@ task dispatches on whatever is already active rather than stealing the model
 mid-turn. `MODEL_SWITCH_LOCK` (`${STATE_DIR}/.model-switch.lock`, flock'd on a
 fixed fd per caller: 8 in the scheduler process for the health probe, 9 in each
 backgrounded cron dispatch) serializes every switch so two dispatchers can
-never interleave `/model`/`/effort` keystrokes into the one shared pane; a lock
-timeout (`MODEL_SWITCH_LOCK_TIMEOUT`, 45s) falls back to dispatching on the
-active model rather than blocking the task indefinitely. After the reply lands
+never interleave `/model`/`/effort` keystrokes into the one shared pane. The
+cron dispatcher (fd 9) runs in its own backgrounded process, so it can afford
+a blocking wait (`MODEL_SWITCH_LOCK_TIMEOUT`, 45s) before falling back to
+dispatching on the active model. The health probe (fd 8) runs synchronously
+inside the main scheduler loop instead, so it uses `flock -n` (non-blocking):
+on 2026-09-27 it briefly used the same 45s blocking wait, and a long opus
+`bitbucket-pr`/`github-pr-review` turn holding the lock for its full runtime
+froze the scheduler loop for up to 45s at a time on every probe tick that
+contended with it, delaying the probe's own resolution enough to trip 17 false
+"wedged" respawns in 9 hours, killing whatever cron task was mid-flight at the
+time as collateral damage. `flock -n` fails instantly instead: if the lock is
+held, the probe just runs on the active model for that cycle rather than
+freezing the loop. After the reply lands
 (or the post/wait fails), the wrapper switches back to the standing default
 before releasing the lock. `bitbucket-pr` and `github-pr-review` are opus in
 `models.json`; every other `prompt_file` task falls through to the defaults
