@@ -276,9 +276,15 @@ session only ever ran on whatever model it was launched with (persisted in
 real, per dispatch, using the CLI's own interactive `/model <name>` and
 `/effort <level>` commands (`claude_session_switch_model`,
 `watchers/plugins/claude_session.sh`) instead of a respawn: both take a direct
-argument, switch immediately, are session-scoped (do not touch
-`telegram-model.txt`/the CLI's own persisted default), and keep the running
-conversation and its `--continue` context intact. The switch only fires when
+argument and switch immediately, keeping the running conversation and its
+`--continue` context intact. Verified live on 2026-09-27: both also print
+"saved as your default for new sessions" - they write the CLI's OWN persisted
+default (not `telegram-model.txt`, which only the bot's `/opus`/`/sonnet`/
+`/haiku` Telegram commands touch), so every switch-and-restore cycle
+overwrites and restores that file too. Each call only sends `/model`/`/effort`
+when the target actually differs from the value passed as "current"
+(`claude_session_switch_model`'s 3rd/4th args), so a task or probe whose
+target already matches the live default sends neither. The switch only fires when
 the task's model/effort differ from the standing default
 (`_claude_session_persisted_model`/`_effort`, reading the same
 `telegram-model.txt`/`telegram-effort.txt` the respawn path uses), and only

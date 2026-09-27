@@ -261,7 +261,7 @@ _cron_dispatch_botchannel() {
         log "cron: session busy - dispatching '${name}' on the standing default instead of ${model}/${effort}"
         flock -u 9
       else
-        claude_session_switch_model "$model" "$effort"
+        claude_session_switch_model "$model" "$effort" "$default_model" "$default_effort"
         switched=1
       fi
     else
@@ -271,7 +271,7 @@ _cron_dispatch_botchannel() {
 
   if ! _cron_post "$name" "$request_id" "$prompt" "$inflight_lock"; then
     if [ "$switched" -eq 1 ]; then
-      claude_session_switch_model "$default_model" "$default_effort"
+      claude_session_switch_model "$default_model" "$default_effort" "$model" "$effort"
       flock -u 9
     fi
     exec 9>&-
@@ -279,7 +279,7 @@ _cron_dispatch_botchannel() {
   fi
   output=$(_cron_wait_reply "$name" "$request_id" "$effective_timeout" "$inflight_lock")
   if [ "$switched" -eq 1 ]; then
-    claude_session_switch_model "$default_model" "$default_effort"
+    claude_session_switch_model "$default_model" "$default_effort" "$model" "$effort"
     flock -u 9
   fi
   exec 9>&-

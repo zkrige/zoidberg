@@ -411,13 +411,13 @@ _claude_session_persisted_effort() {
 }
 
 claude_session_switch_model() {
-  local model="$1" effort="$2"
-  if [ -n "$model" ]; then
+  local model="$1" effort="$2" current_model="$3" current_effort="$4"
+  if [ -n "$model" ] && [ "$model" != "$current_model" ]; then
     tmux send-keys -t "$CLAUDE_TMUX_SESSION" -l -- "/model ${model}"
     tmux send-keys -t "$CLAUDE_TMUX_SESSION" Enter
     sleep 1
   fi
-  if [ -n "$effort" ]; then
+  if [ -n "$effort" ] && [ "$effort" != "$current_effort" ]; then
     tmux send-keys -t "$CLAUDE_TMUX_SESSION" -l -- "/effort ${effort}"
     tmux send-keys -t "$CLAUDE_TMUX_SESSION" Enter
     sleep 1
@@ -565,12 +565,15 @@ _HEALTH_PROBE_STRIKES=0
 _HEALTH_PROBE_PENDING_RID=""
 _HEALTH_PROBE_PENDING_SINCE=0
 _HEALTH_PROBE_SWITCHED=0
+_HEALTH_PROBE_MODEL=""
+_HEALTH_PROBE_EFFORT=""
 _HEALTH_PROBE_DEFAULT_MODEL=""
 _HEALTH_PROBE_DEFAULT_EFFORT=""
 
 _claude_session_release_probe_model() {
   [ "$_HEALTH_PROBE_SWITCHED" -eq 1 ] || return 0
-  claude_session_switch_model "$_HEALTH_PROBE_DEFAULT_MODEL" "$_HEALTH_PROBE_DEFAULT_EFFORT"
+  claude_session_switch_model "$_HEALTH_PROBE_DEFAULT_MODEL" "$_HEALTH_PROBE_DEFAULT_EFFORT" \
+    "$_HEALTH_PROBE_MODEL" "$_HEALTH_PROBE_EFFORT"
   _HEALTH_PROBE_SWITCHED=0
   flock -u 8
 }
@@ -618,8 +621,10 @@ claude_session_health_probe() {
   default_effort=$(_claude_session_persisted_effort)
   if [ "$probe_model" != "$default_model" ] || [ "$probe_effort" != "$default_effort" ]; then
     if flock -w "$MODEL_SWITCH_LOCK_TIMEOUT" 8; then
-      claude_session_switch_model "$probe_model" "$probe_effort"
+      claude_session_switch_model "$probe_model" "$probe_effort" "$default_model" "$default_effort"
       _HEALTH_PROBE_SWITCHED=1
+      _HEALTH_PROBE_MODEL="$probe_model"
+      _HEALTH_PROBE_EFFORT="$probe_effort"
       _HEALTH_PROBE_DEFAULT_MODEL="$default_model"
       _HEALTH_PROBE_DEFAULT_EFFORT="$default_effort"
     else
