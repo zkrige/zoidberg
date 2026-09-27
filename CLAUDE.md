@@ -262,6 +262,56 @@ A task name in `schedule.json` is a stable identifier used by the command
 system. Renaming one breaks `/retry <task>` until the change reaches the host,
 so never rename a task that was not asked about.
 
+### Per-task model/effort actually switch the session
+
+`config/models.json` (`.tasks.<name>.model`/`.effort`, falling back to
+`.defaults`) is read by `cron.sh`'s `_cron_apply_models_override`
+(`watchers/plugins/cron.sh:147`) into `task_model`/`task_effort`. Before
+2026-09-27 that override was parsed and then never used again: the shared
+session only ever ran on whatever model it was launched with (persisted in
+`state/telegram-model.txt`, applied on the next `claude_session_spawn`), so
+`bitbucket-pr`'s `"opus"` entry was dead configuration.
+
+`_cron_dispatch_botchannel` (`watchers/plugins/cron.sh:241`) now applies it for
+real, per dispatch, using the CLI's own interactive `/model <name>` and
+`/effort <level>` commands (`claude_session_switch_model`,
+`watchers/plugins/claude_session.sh`) instead of a respawn: both take a direct
+argument, switch immediately, are session-scoped (do not touch
+`telegram-model.txt`/the CLI's own persisted default), and keep the running
+conversation and its `--continue` context intact. The switch only fires when
+the task's model/effort differ from the standing default
+(`_claude_session_persisted_model`/`_effort`, reading the same
+`telegram-model.txt`/`telegram-effort.txt` the respawn path uses), and only
+when the session is idle (`claude_session_is_busy`/`BUSY_LOCK`) - if busy, the
+task dispatches on whatever is already active rather than stealing the model
+mid-turn. `MODEL_SWITCH_LOCK` (`${STATE_DIR}/.model-switch.lock`, flock'd on a
+fixed fd per caller: 8 in the scheduler process for the health probe, 9 in each
+backgrounded cron dispatch) serializes every switch so two dispatchers can
+never interleave `/model`/`/effort` keystrokes into the one shared pane; a lock
+timeout (`MODEL_SWITCH_LOCK_TIMEOUT`, 45s) falls back to dispatching on the
+active model rather than blocking the task indefinitely. After the reply lands
+(or the post/wait fails), the wrapper switches back to the standing default
+before releasing the lock. `bitbucket-pr` and `github-pr-review` are opus in
+`models.json`; every other `prompt_file` task falls through to the defaults
+block (sonnet). A `command` task (`website-stats`, `gsc-fix`, `boom`,
+`boom-check-win`, `import-sweep`, `container-restart`) never reaches Claude at
+all (`_cron_run_task`, `watchers/plugins/cron.sh:105`), so a `models.json` entry
+for one is dead - `website-stats` and `gsc-fix` carried one until 2026-09-27;
+removed rather than left to imply a model that never runs.
+
+The health probe (`claude_session_health_probe`,
+`watchers/plugins/claude_session.sh:578`) uses the identical
+`claude_session_switch_model` + `MODEL_SWITCH_LOCK` mechanism so a probe and a
+task-model switch can never race each other: its "reply: ok" round trip needs
+no reasoning, so it runs on `session.health_probe_model`/`health_probe_effort`
+(`config.json`, default `haiku`/`low`) instead of the standing default. Because
+the probe posts on one scheduler tick and resolves (reply lands, or times out)
+on a later one, the lock is acquired at post time and held across ticks via a
+persistent fd (8, opened once by `claude_session_init`) rather than released
+and reacquired - `_claude_session_release_probe_model` switches back to the
+standing default and releases it on every resolution path (reply landed,
+timed out, or the post itself failed).
+
 ## Deployment
 Production is a Docker container (`zoidberg`, scheduler = PID 1) on a Linux
 host. The repo is bind-mounted `${REPO_PATH:-.}` → `/app`; the skills repo
@@ -447,7 +497,7 @@ credentials before looking at any individual task.
 call returns 401. The authoritative signal is the transcript: the newest
 assistant record carries `isApiErrorMessage: true` with the text
 `Login expired · Please run /login`. `_claude_session_auth_expired`
-(`watchers/plugins/claude_session.sh:424`) reads that record, and
+(`watchers/plugins/claude_session.sh:452`) reads that record, and
 `claude_session_check_auth` sends a debounced Telegram alert on it each tick.
 Rendered pane content cannot forge a transcript record, which is why the check
 lives there instead of in a pane grep (622dd6e). An error record older than

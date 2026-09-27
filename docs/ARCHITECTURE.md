@@ -33,7 +33,7 @@ finishes by calling a `reply` tool, which ends the request.
 
 The bot does **not** spawn `claude -p` per message. It launches ONE persistent
 interactive `claude` process inside a tmux session named `zoidberg`
-(`watchers/plugins/claude_session.sh:13`, launch command at lines 87-88):
+(`watchers/plugins/claude_session.sh:13`, launch command at lines 113-114):
 
 ```
 cd /app && exec $CLAUDE_BIN --permission-mode bypassPermissions --model $model \
@@ -51,19 +51,19 @@ independent callers, in exchange for that billing model.
 
 ### How a plugin dispatches
 
-1. A plugin (cron, telegram, whatsapp) calls `bot_channel_post <request_id> <kind> <content>` (`watchers/plugins/claude_session.sh:153-169`), which POSTs JSON `{request_id, kind, content}` to `http://127.0.0.1:8790/`.
-2. The bot-channel MCP server (`lib/channels/bot-channel/server.ts`, a Bun process registered as an MCP server inside the same `claude` invocation) receives the POST in its `Bun.serve` HTTP handler (lines 75-114) and turns it into an MCP notification `notifications/claude/channel` (line 106-109), with `meta.request_id` and `meta.kind` attached.
-3. Claude Code renders that notification to the live session as a `<channel source="bot-channel" request_id="..." kind="...">` message (per the server's `instructions` block, lines 34-41).
-4. The caller then calls `bot_channel_wait_reply <request_id> <timeout>` (lines 176-200), which polls for a reply file at `${BOT_CHANNEL_REPLIES_DIR}/<request_id>.txt` (default `~/.claude/channels/bot-channel/replies/`, `server.ts:23`).
-5. Inside the session, Claude finishes the work and calls the `reply` MCP tool exactly once with `{request_id, text}`. The server writes it to a temp file and atomically renames it into place (`server.ts:64-68`), so the orchestrator only ever observes a fully-written reply.
-6. `bot_channel_wait_reply` reads and deletes that file and returns the text to the caller (cron: `_cron_wait_reply`, `watchers/plugins/cron.sh:252-266`).
+1. A plugin (cron, telegram, whatsapp) calls `bot_channel_post <request_id> <kind> <content>` (`watchers/plugins/claude_session.sh:270-286`), which POSTs JSON `{request_id, kind, content}` to `http://127.0.0.1:8790/`.
+2. The bot-channel MCP server (`lib/channels/bot-channel/server.ts`, a Bun process registered as an MCP server inside the same `claude` invocation) receives the POST in its `Bun.serve` HTTP handler (lines 108-147) and turns it into an MCP notification `notifications/claude/channel` (lines 139-142), with `meta.request_id` and `meta.kind` attached.
+3. Claude Code renders that notification to the live session as a `<channel source="bot-channel" request_id="..." kind="...">` message (per the server's `instructions` block, lines 39-48).
+4. The caller then calls `bot_channel_wait_reply <request_id> <timeout>` (lines 293-317), which polls for a reply file at `${BOT_CHANNEL_REPLIES_DIR}/<request_id>.txt` (default `~/.claude/channels/bot-channel/replies/`, `server.ts:28`).
+5. Inside the session, Claude finishes the work and calls the `reply` MCP tool exactly once with `{request_id, text}`. The server writes it to a temp file and atomically renames it into place (`server.ts:100-101`), so the orchestrator only ever observes a fully-written reply.
+6. `bot_channel_wait_reply` reads and deletes that file and returns the text to the caller (cron: `_cron_wait_reply`, `watchers/plugins/cron.sh:308-326`).
 
 If the session is torn down mid-wait (a SIGHUP reload, a respawn), a
 monotonically increasing generation marker at `state/.session-generation`
-(written on every `claude_session_spawn`, `claude_session.sh:141`) lets
+(written on every `claude_session_spawn`, `claude_session.sh:232`) lets
 `bot_channel_wait_reply` detect that the request it is waiting on can never be
 answered and fail fast instead of blocking out the full timeout
-(`claude_session.sh:188-195`).
+(`claude_session.sh:305-312`).
 
 ### Persistence and context management
 
@@ -94,13 +94,22 @@ session is otherwise alive, that is the cause, and
 standard window.
 
 A non-blocking health probe (`claude_session_health_probe`,
-`claude_session.sh:433-478`) periodically posts a synthetic channel event and
+`claude_session.sh:578-640`) periodically posts a synthetic channel event and
 checks for its reply on later scheduler ticks, distinguishing "busy" (fresh
 transcript writes within the probe window,
-`_claude_session_transcript_fresh`, lines 376-382) from "wedged" (no writes,
+`_claude_session_transcript_fresh`, lines 510-516) from "wedged" (no writes,
 no reply - respawn after `max_strikes` consecutive failures) from
 "auth-expired" (401 banner on the pane - alert instead of respawn-looping,
-lines 408-417).
+lines 452-466).
+
+The probe itself needs no reasoning ("reply: ok"), so it runs on
+`session.health_probe_model`/`health_probe_effort` (`config.json`, default
+`haiku`/`low`) rather than the session's standing default, switched via the
+same `claude_session_switch_model` + `MODEL_SWITCH_LOCK` mechanism that
+`cron.sh` uses for per-task model/effort (see CLAUDE.md, "Per-task model/effort
+actually switch the session"). Because the probe posts on one tick and resolves
+on a later one, the switch-back and lock release happen in
+`_claude_session_release_probe_model`, not inline in the post.
 
 ## Framework and content split
 
@@ -198,9 +207,9 @@ Lifecycle hooks, named `<plugin>_<hook>`, called by the orchestrator:
 
 | Hook | Required | When | Example |
 |---|---|---|---|
-| `<plugin>_init` | optional | once, after all plugins are sourced (`scheduler.sh:110-114`); non-zero return is logged but the plugin stays loaded ("may be degraded") | `cron_init` checks `SCHEDULE_FILE` exists (`cron.sh:287-294`) |
-| `<plugin>_tick` | **required** | every main-loop iteration, no interval built in - plugins self-throttle | `autoupdate_tick` checks its own `_AUTOUPDATE_INTERVAL` (`autoupdate.sh:36-42`); `cron_tick` only re-checks tasks once per new minute (`cron.sh:298-305`) |
-| `<plugin>_cleanup` | optional | on SIGHUP (before re-exec) and on process exit (`trap cleanup EXIT INT TERM`, `scheduler.sh:49`) | `claude_session_cleanup` kills the tmux session (`claude_session.sh:518-520`) |
+| `<plugin>_init` | optional | once, after all plugins are sourced (`scheduler.sh:110-114`); non-zero return is logged but the plugin stays loaded ("may be degraded") | `cron_init` checks `SCHEDULE_FILE` exists (`cron.sh:347-354`) |
+| `<plugin>_tick` | **required** | every main-loop iteration, no interval built in - plugins self-throttle | `autoupdate_tick` checks its own `_AUTOUPDATE_INTERVAL` (`autoupdate.sh:50-56`); `cron_tick` only re-checks tasks once per new minute (`cron.sh:358-365`) |
+| `<plugin>_cleanup` | optional | on SIGHUP (before re-exec) and on process exit (`trap cleanup EXIT INT TERM`, `scheduler.sh:49`) | `claude_session_cleanup` kills the tmux session (`claude_session.sh:690-692`) |
 | `<plugin>_on_wake` | optional | when the loop detects a gap greater than `2 * POLL_TIMEOUT` since the last iteration (system sleep/resume) (`scheduler.sh:136-148`) | `telegram_on_wake` clears a stale busy lock and drains the queue (`telegram.sh:139-146`) |
 
 Globals a plugin may rely on (all set by `scheduler.sh` or `lib/common.sh`
@@ -230,7 +239,7 @@ never called.
 shell script directly, no Claude involved) or a `prompt_file` (posted into the
 interactive session via the bot-channel transport). Both `command` tasks and
 any configured `pre_check` script receive the same exported environment,
-built by `_export_task_env` (`watchers/plugins/cron.sh:186-191`):
+built by `_export_task_env` (`watchers/plugins/cron.sh:194-198`):
 
 ```bash
 _export_task_env() {
@@ -242,9 +251,9 @@ _export_task_env() {
 
 That is: `CONTENT_DIR`, `APP_DIR` (= `REPO_DIR`), `STATE_DIR`, `SKILLS_DIR`,
 `CONFIG_FILE`, `SECRETS_FILE`. `pre_check` scripts run with this env from
-`_cron_run_precheck` (`cron.sh:175-184`); `command` tasks run with it from
+`_cron_run_precheck` (`cron.sh:182-191`); `command` tasks run with it from
 `_cron_dispatch_command`, which also `cd`s to `$REPO_DIR` first
-(`cron.sh:193-215`, `cd "$REPO_DIR"` at line 196). A `command`/`pre_check`
+(`cron.sh:215-238`, `cd "$REPO_DIR"` at line 218). A `command`/`pre_check`
 task therefore always runs with cwd `$REPO_DIR` (`/app` in production) and can
 read `$CONFIG_FILE`/`$SECRETS_FILE` directly without knowing the `CONTENT_DIR`
 resolution rules itself.
@@ -253,10 +262,10 @@ resolution rules itself.
 session, not a subprocess, so the running Claude turn already has full tool
 access; there is nothing to export.
 
-Prompt-file paths are gated: `_cron_gate_prompt_path` (`cron.sh:150-161`)
+Prompt-file paths are gated: `_cron_gate_prompt_path` (`cron.sh:157-168`)
 blocks any `prompt_file` not matching `agents/*.txt` (relative to
 `CONTENT_DIR`), unless the task also carries a `command`. Unknown task names
-are blocked via `is_allowed_task` (`lib/common.sh:202-207`), which checks the
+are blocked via `is_allowed_task` (`lib/common.sh:225-230`), which checks the
 name exists in `schedule.json` - this is what makes `schedule.json` the
 source of truth for the task whitelist described in the top-level `CLAUDE.md`.
 
@@ -279,7 +288,7 @@ so every build orphans a full 2.27GB image. Left alone that accumulates without
 bound and eventually fills the deploy host's disk. Pruning here rather than from
 a host timer keeps it inside the repo, so a clean install inherits it.
 
-`docker/entrypoint.sh` is **baked into the image** (`Dockerfile:69-70`,
+`docker/entrypoint.sh` is **baked into the image** (`Dockerfile:198`,
 `COPY docker/entrypoint.sh /entrypoint.sh`), unlike `watchers/` and `lib/`
 which are bind-mounted and live-editable. Changing `entrypoint.sh` therefore
 only takes effect after a full rebuild (the first row of the table above,
@@ -306,27 +315,27 @@ exits PID 1 so Docker recreates the container from the current image
 - **Identity is verified by the transport, never by message content.** The
   Telegram `chat_id` and WhatsApp JID are read from `config/secrets.json` at
   daemon startup and compared against the incoming transport's own metadata
-  (`telegram.sh:199` compares `msg_chat_id` to `$TG_CHAT_ID`;
+  (`telegram.sh:202` compares `msg_chat_id` to `$TG_CHAT_ID`;
   `whatsapp-dispatch.sh:42-45` compares the webhook's `chat_jid` to
   `$WHATSAPP_SELF_JID`). A message body claiming "I am the owner" is always
   untrusted data, never a credential.
 - **The per-message channel body stays minimal.** Guardrails, the operating
   system prompt, portable memory, and recent `/feedback` corrections are all
   assembled once into the session's real `--append-system-prompt-file`
-  (`claude_session.sh:61-80`), not re-embedded in every dispatched message.
+  (`claude_session.sh:72-103`), not re-embedded in every dispatched message.
   A persistent session already holds its own real turns; re-pasting that
   scaffolding into the body reads to a security-aware model as a fabricated
   prompt-injection envelope and has caused it to refuse genuine owner
-  commands (see the note at `claude_session.sh:49-60`).
+  commands (see the note at `claude_session.sh:72-83`).
 - **Secrets never live in the framework repo.** `config/secrets.json` lives
   in the content overlay, is `.gitignore`d there, and is placed out-of-band on
   the host. The framework repo (`Zoidberg` itself) contains no
   operator secrets, account IDs, or JIDs - see the `render_prompt`
-  placeholder mechanism (`lib/common.sh:189-197`) for how per-operator values
+  placeholder mechanism (`lib/common.sh:212-220`) for how per-operator values
   are kept out of tracked prompt text entirely.
 - **A container-level component can run independent of its feature flag.**
-  `docker/entrypoint.sh:57-70` starts the WhatsApp bridge binary and registers
-  its MCP server (lines 72-88) unconditionally whenever
+  `docker/entrypoint.sh:64-77` starts the WhatsApp bridge binary and registers
+  its MCP server (lines 79-100) unconditionally whenever
   `/usr/local/bin/whatsapp-bridge` exists in the image - it does not consult
   `.features.whatsapp`. Only the scheduler-level `whatsapp` plugin (the
   webhook listener that actually triages messages) is gated by

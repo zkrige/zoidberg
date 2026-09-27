@@ -17,6 +17,8 @@ BOT_CHANNEL_REPLIES_DIR="${HOME}/.claude/channels/bot-channel/replies"
 BOT_CHANNEL_HEALTH_URL="http://127.0.0.1:${BOT_CHANNEL_PORT}/health"
 # Transcript dir for the /app project (used to read live context size).
 CLAUDE_PROJECT_TRANSCRIPT_DIR="${HOME}/.claude/projects/-app"
+MODEL_SWITCH_LOCK="${STATE_DIR}/.model-switch.lock"
+MODEL_SWITCH_LOCK_TIMEOUT="${MODEL_SWITCH_LOCK_TIMEOUT:-45}"
 
 # ---------------------------------------------------------------------------
 # claude_session_is_alive - tmux session exists and claude pid is alive
@@ -396,6 +398,32 @@ claude_session_apply_pending_model() {
   claude_session_spawn
 }
 
+_claude_session_persisted_model() {
+  local m
+  m=$(cat "${STATE_DIR}/telegram-model.txt" 2>/dev/null)
+  printf '%s' "${m:-${DEFAULT_MODEL:-sonnet}}"
+}
+
+_claude_session_persisted_effort() {
+  local e
+  e=$(cat "${STATE_DIR}/telegram-effort.txt" 2>/dev/null)
+  printf '%s' "${e:-${DEFAULT_EFFORT:-medium}}"
+}
+
+claude_session_switch_model() {
+  local model="$1" effort="$2"
+  if [ -n "$model" ]; then
+    tmux send-keys -t "$CLAUDE_TMUX_SESSION" -l -- "/model ${model}"
+    tmux send-keys -t "$CLAUDE_TMUX_SESSION" Enter
+    sleep 1
+  fi
+  if [ -n "$effort" ]; then
+    tmux send-keys -t "$CLAUDE_TMUX_SESSION" -l -- "/effort ${effort}"
+    tmux send-keys -t "$CLAUDE_TMUX_SESSION" Enter
+    sleep 1
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # _claude_session_auth_expired - true if the session's LATEST turn failed with
 # the expired-login error. Anthropic returns 401 with a 0 exit code and
@@ -536,11 +564,17 @@ _HEALTH_PROBE_LAST=0
 _HEALTH_PROBE_STRIKES=0
 _HEALTH_PROBE_PENDING_RID=""
 _HEALTH_PROBE_PENDING_SINCE=0
-# NON-BLOCKING: post a synthetic channel event and check for its reply on later
-# ticks, rather than blocking the scheduler loop for the full timeout. The old
-# blocking wait added up to `timeout` seconds to every loop iteration (on top of
-# the 30s telegram long-poll), delaying cron and message handling; post-then-poll
-# keeps each tick cheap.
+_HEALTH_PROBE_SWITCHED=0
+_HEALTH_PROBE_DEFAULT_MODEL=""
+_HEALTH_PROBE_DEFAULT_EFFORT=""
+
+_claude_session_release_probe_model() {
+  [ "$_HEALTH_PROBE_SWITCHED" -eq 1 ] || return 0
+  claude_session_switch_model "$_HEALTH_PROBE_DEFAULT_MODEL" "$_HEALTH_PROBE_DEFAULT_EFFORT"
+  _HEALTH_PROBE_SWITCHED=0
+  flock -u 8
+}
+
 claude_session_health_probe() {
   local interval timeout max_strikes now
   interval=$(get_config '.session.health_probe_interval' 2>/dev/null)
@@ -551,31 +585,46 @@ claude_session_health_probe() {
   [[ "$max_strikes" =~ ^[0-9]+$ ]] || max_strikes=2
   now=$(date +%s)
 
-  # Resolve a probe posted on an earlier tick (non-blocking).
   if [ -n "$_HEALTH_PROBE_PENDING_RID" ]; then
     local reply_file="${BOT_CHANNEL_REPLIES_DIR}/${_HEALTH_PROBE_PENDING_RID}.txt"
     if [ -f "$reply_file" ]; then
       rm -f "$reply_file"
       _HEALTH_PROBE_PENDING_RID=""
       _HEALTH_PROBE_STRIKES=0
+      _claude_session_release_probe_model
       return 0
     fi
     if [ $(( now - _HEALTH_PROBE_PENDING_SINCE )) -ge "$timeout" ]; then
       rm -f "$reply_file" 2>/dev/null
       _HEALTH_PROBE_PENDING_RID=""
+      _claude_session_release_probe_model
       _claude_session_resolve_probe_failure "$timeout" "$max_strikes"
     fi
     return 0
   fi
 
-  # No probe in flight: post a new one once the interval has elapsed. Skip while
-  # the session is known-busy (a mid-turn session would fail spuriously); the
-  # busy lock is heartbeat-refreshed and self-expires, so a wedge is still caught
-  # between turns.
   [ $(( now - _HEALTH_PROBE_LAST )) -ge "$interval" ] || return 0
   if claude_session_is_busy || [ -e "${BUSY_LOCK:-/tmp/claude-telegram.busy}" ]; then
     _HEALTH_PROBE_STRIKES=0
     return 0
+  fi
+
+  local probe_model probe_effort default_model default_effort
+  probe_model=$(get_config '.session.health_probe_model' 2>/dev/null)
+  [ -n "$probe_model" ] && [ "$probe_model" != "null" ] || probe_model="haiku"
+  probe_effort=$(get_config '.session.health_probe_effort' 2>/dev/null)
+  [ -n "$probe_effort" ] && [ "$probe_effort" != "null" ] || probe_effort="low"
+  default_model=$(_claude_session_persisted_model)
+  default_effort=$(_claude_session_persisted_effort)
+  if [ "$probe_model" != "$default_model" ] || [ "$probe_effort" != "$default_effort" ]; then
+    if flock -w "$MODEL_SWITCH_LOCK_TIMEOUT" 8; then
+      claude_session_switch_model "$probe_model" "$probe_effort"
+      _HEALTH_PROBE_SWITCHED=1
+      _HEALTH_PROBE_DEFAULT_MODEL="$default_model"
+      _HEALTH_PROBE_DEFAULT_EFFORT="$default_effort"
+    else
+      log "claude-session: model-switch lock timeout for health probe, probing on the active model"
+    fi
   fi
 
   local rid="health-${now}-$$"
@@ -584,6 +633,8 @@ claude_session_health_probe() {
     _HEALTH_PROBE_PENDING_RID="$rid"
     _HEALTH_PROBE_PENDING_SINCE=$now
     _HEALTH_PROBE_LAST=$now
+  else
+    _claude_session_release_probe_model
   fi
   return 0
 }
@@ -600,6 +651,8 @@ claude_session_init() {
     log "claude-session: FATAL bun not installed"
     return 1
   fi
+  touch "$MODEL_SWITCH_LOCK" 2>/dev/null
+  exec 8>"$MODEL_SWITCH_LOCK"
   if claude_session_is_alive; then
     log "claude-session: existing session '${CLAUDE_TMUX_SESSION}' still alive, reusing"
     return 0

@@ -140,7 +140,8 @@ _cron_dispatch_prompt() {
   fi
   log "cron: dispatching '${name}' via bot-channel"
   _cron_dispatch_botchannel "$name" "$prompt" "$task_wall_timeout" \
-    "$notify_stdout" "$notify_filter" "$current_key" "$state_file" "$inflight_lock" "$task_error_filter" &
+    "$notify_stdout" "$notify_filter" "$current_key" "$state_file" "$inflight_lock" "$task_error_filter" \
+    "$task_model" "$task_effort" &
 }
 
 _cron_apply_models_override() {
@@ -240,6 +241,7 @@ ${output}"
 _cron_dispatch_botchannel() {
   local name="$1" prompt="$2" task_wall_timeout="$3"
   local notify_stdout="$4" notify_filter="$5" current_key="$6" state_file="$7" inflight_lock="$8" error_filter="$9"
+  local model="${10}" effort="${11}"
   cd "$REPO_DIR" || exit
   echo "$current_key" > "$state_file"
   local err_log="${LOGS_DIR}/${name}.err.log"
@@ -248,10 +250,41 @@ _cron_dispatch_botchannel() {
   err_size_before=$(wc -c < "$err_log" 2>/dev/null | tr -d ' ')
   local effective_timeout="${task_wall_timeout:-${CLAUDE_WALL_TIMEOUT:-1200}}"
   local request_id="cron-${name}-${current_key}-$$"
-  _cron_post "$name" "$request_id" "$prompt" "$inflight_lock" || return
+
+  local default_model default_effort switched=0
+  default_model=$(_claude_session_persisted_model)
+  default_effort=$(_claude_session_persisted_effort)
+  exec 9>"$MODEL_SWITCH_LOCK"
+  if [ "$model" != "$default_model" ] || [ "$effort" != "$default_effort" ]; then
+    if flock -w "$MODEL_SWITCH_LOCK_TIMEOUT" 9; then
+      if claude_session_is_busy || [ -e "${BUSY_LOCK:-/tmp/claude-telegram.busy}" ]; then
+        log "cron: session busy - dispatching '${name}' on the standing default instead of ${model}/${effort}"
+        flock -u 9
+      else
+        claude_session_switch_model "$model" "$effort"
+        switched=1
+      fi
+    else
+      log "cron: model-switch lock timeout for '${name}' - dispatching on the active model"
+    fi
+  fi
+
+  if ! _cron_post "$name" "$request_id" "$prompt" "$inflight_lock"; then
+    if [ "$switched" -eq 1 ]; then
+      claude_session_switch_model "$default_model" "$default_effort"
+      flock -u 9
+    fi
+    exec 9>&-
+    return
+  fi
   output=$(_cron_wait_reply "$name" "$request_id" "$effective_timeout" "$inflight_lock")
+  if [ "$switched" -eq 1 ]; then
+    claude_session_switch_model "$default_model" "$default_effort"
+    flock -u 9
+  fi
+  exec 9>&-
+
   echo "$output" >> "${LOGS_DIR}/${name}.log"
-  # Log task failures for self-evolution when stderr grew during the run.
   local err_size_after
   err_size_after=$(wc -c < "$err_log" 2>/dev/null | tr -d ' ')
   [ "${err_size_after:-0}" -gt "${err_size_before:-0}" ] && log_failure "task_error" "$name" "cron"
