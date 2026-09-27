@@ -57,6 +57,7 @@ services:
       # docker/entrypoint.sh. Set this var in the host env only to override.
       - WHATSAPP_BRIDGE_API_KEY=${WHATSAPP_BRIDGE_API_KEY:-}
       - SOPS_AGE_KEY_FILE=/run/age-key.txt
+      - CLAUDE_CODE_AUTO_COMPACT_WINDOW=500000
     ports:
       - "${WA_BRIDGE_PORT:-8080}:8080"
       - "${WA_WEBHOOK_PORT:-8769}:8769"

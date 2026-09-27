@@ -530,11 +530,22 @@ pane text `Usage credits required for 1M context`. Setting
 `CLAUDE_CODE_DISABLE_1M_CONTEXT=1` (commit d8460ce) forced a 200k window and
 fixed it. That ran on a Sonnet 4.6-era model, which gates the 1M tier on usage
 credits. Sonnet 5 has no such gate: it gets 1M context natively, with automatic
-compaction near 967k tokens. Commit f37d319 removed the flag on 2026-07-25, and
-a live check on 2026-08-01 found zero occurrences of `credits`, `1M context`,
-`hang` or `hung` across 23,351 log lines, zero container restarts, zero OOM
-kills, and a healthy idle session. `claude_session_maybe_clear`, a manual
-`/clear` at 120k tokens, was deleted at the same time as redundant.
+compaction near 967k tokens by default. Commit f37d319 removed the flag on
+2026-07-25, and a live check on 2026-08-01 found zero occurrences of `credits`,
+`1M context`, `hang` or `hung` across 23,351 log lines, zero container restarts,
+zero OOM kills, and a healthy idle session. `claude_session_maybe_clear`, a
+manual `/clear` at 120k tokens, was deleted at the same time as redundant.
+
+`docker-compose.yml`'s `environment` sets
+`CLAUDE_CODE_AUTO_COMPACT_WINDOW=500000` (added 2026-09-27), which lowers the
+compaction trigger from the ~967k default to 500k tokens - the CLI's own
+native setting (`autoCompactWindow`/`CLAUDE_CODE_AUTO_COMPACT_WINDOW`, verified
+against the installed CLI binary's strings, not the deleted manual-`/clear`
+mechanism). It compacts sooner rather than letting the always-on session ride
+to the edge of the window, at the cost of more frequent compactions. Since this
+touches `docker-compose.yml`, self-update.sh's rebuild gate applies: the next
+deploy tick recreates the container (`docker compose up -d --build
+--force-recreate`), not just a SIGHUP.
 
 An earlier claim that auto-compaction is gated off in non-interactive or
 tmux-piped delivery is RETRACTED. It was an inference chained onto the
