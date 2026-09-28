@@ -130,6 +130,8 @@ RUN npm install -g @playwright/mcp playwright \
     && playwright install --with-deps chromium \
     && chmod -R a+rX /opt/ms-playwright
 
+RUN npm install -g cf
+
 # whisper.cpp binary + model, built in the whisper-payload stage above (empty
 # when ENABLE_WHISPER=0). `transcribe <audio>` is the only entry point: it
 # resamples to the 16kHz mono WAV whisper.cpp needs and prints the transcript
