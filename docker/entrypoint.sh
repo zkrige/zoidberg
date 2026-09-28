@@ -32,6 +32,7 @@ fi
 BACKUP_DIR=/app/store/volume-backup
 
 bash /app/docker/sync-secret-store.sh
+ln -sfn ~/.claude/skills/resolve-cred.py ~/.claude/config/resolve-cred.py
 
 # Restore Claude auth if missing (fresh volume)
 if [ ! -f ~/.claude/.credentials.json ] && [ -f "$BACKUP_DIR/claude-credentials.json" ]; then

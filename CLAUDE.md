@@ -225,6 +225,7 @@ detector.
 - `scripts/scheduled-restart.sh` - host-cron daily container restart (tmux/auth/session hygiene), deferred while a Telegram turn or a cron task is in flight
 - `docker/entrypoint.sh` - container startup (auth check, git config, `exec scheduler.sh`)
 - `docker/sync-secret-store.sh` - in-container decrypt of `store/volume-backup/credentials.enc.json` into `~/.claude/config/credentials.json` and `/app/store/credentials.json`; run by the entrypoint at every start and by `scripts/self-update.sh` when the mirrored ciphertext changes
+- `docker/entrypoint.sh` also links `~/.claude/config/resolve-cred.py` to `resolve-cred.py` in the mounted claude-skills repo, so skills resolve credentials from that plaintext `credentials.json` exactly as on the Mac
 - `docker/transcribe` - voice-note transcription (`transcribe <audio-file>` → transcript on stdout), wrapping the whisper.cpp binary baked into the image
 - `install.sh` - one-command bootstrap: prerequisites, clone, content overlay, then `setup.sh run`
 - `setup.sh` - deterministic setup dispatcher: usage text, output helpers, path resolution, `json_write`, `ask`, and the subcommand `case`
