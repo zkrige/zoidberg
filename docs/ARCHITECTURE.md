@@ -54,7 +54,7 @@ independent callers, in exchange for that billing model.
 1. A plugin (cron, telegram, whatsapp) calls `bot_channel_post <request_id> <kind> <content>` (`watchers/plugins/claude_session.sh:270-286`), which POSTs JSON `{request_id, kind, content}` to `http://127.0.0.1:8790/`.
 2. The bot-channel MCP server (`lib/channels/bot-channel/server.ts`, a Bun process registered as an MCP server inside the same `claude` invocation) receives the POST in its `Bun.serve` HTTP handler (lines 108-147) and turns it into an MCP notification `notifications/claude/channel` (lines 139-142), with `meta.request_id` and `meta.kind` attached.
 3. Claude Code renders that notification to the live session as a `<channel source="bot-channel" request_id="..." kind="...">` message (per the server's `instructions` block, lines 39-48).
-4. The caller then calls `bot_channel_wait_reply <request_id> <timeout>` (lines 293-317), which polls for a reply file at `${BOT_CHANNEL_REPLIES_DIR}/<request_id>.txt` (default `~/.claude/channels/bot-channel/replies/`, `server.ts:28`).
+4. The caller then calls `bot_channel_wait_reply <request_id> <timeout>` (lines 294-318), which polls for a reply file at `${BOT_CHANNEL_REPLIES_DIR}/<request_id>.txt` (default `~/.claude/channels/bot-channel/replies/`, `server.ts:28`).
 5. Inside the session, Claude finishes the work and calls the `reply` MCP tool exactly once with `{request_id, text}`. The server writes it to a temp file and atomically renames it into place (`server.ts:100-101`), so the orchestrator only ever observes a fully-written reply.
 6. `bot_channel_wait_reply` reads and deletes that file and returns the text to the caller (cron: `_cron_wait_reply`, `watchers/plugins/cron.sh:308-326`).
 
@@ -63,7 +63,8 @@ monotonically increasing generation marker at `state/.session-generation`
 (written on every `claude_session_spawn`, `claude_session.sh:232`) lets
 `bot_channel_wait_reply` detect that the request it is waiting on can never be
 answered and fail fast instead of blocking out the full timeout
-(`claude_session.sh:305-312`).
+(`claude_session.sh:306-313`), returning 2 so a cron caller can clear its
+in-flight marker.
 
 ### Persistence and context management
 
@@ -94,13 +95,14 @@ session is otherwise alive, that is the cause, and
 standard window.
 
 A non-blocking health probe (`claude_session_health_probe`,
-`claude_session.sh:578-640`) periodically posts a synthetic channel event and
+`claude_session.sh:582-646`) periodically posts a synthetic channel event and
 checks for its reply on later scheduler ticks, distinguishing "busy" (fresh
 transcript writes within the probe window,
-`_claude_session_transcript_fresh`, lines 510-516) from "wedged" (no writes,
+`_claude_session_transcript_fresh`, lines 511-517) from "wedged" (no writes,
 no reply - respawn after `max_strikes` consecutive failures) from
-"auth-expired" (401 banner on the pane - alert instead of respawn-looping,
-lines 452-466).
+"auth-expired" (the transcript's newest assistant record is an
+`isApiErrorMessage` login-expired error - alert instead of respawn-looping,
+`_claude_session_auth_expired`, lines 453-467).
 
 The probe itself needs no reasoning ("reply: ok"), so it runs on
 `session.health_probe_model`/`health_probe_effort` (`config.json`, default
@@ -209,7 +211,7 @@ Lifecycle hooks, named `<plugin>_<hook>`, called by the orchestrator:
 |---|---|---|---|
 | `<plugin>_init` | optional | once, after all plugins are sourced (`scheduler.sh:110-114`); non-zero return is logged but the plugin stays loaded ("may be degraded") | `cron_init` checks `SCHEDULE_FILE` exists (`cron.sh:347-354`) |
 | `<plugin>_tick` | **required** | every main-loop iteration, no interval built in - plugins self-throttle | `autoupdate_tick` checks its own `_AUTOUPDATE_INTERVAL` (`autoupdate.sh:50-56`); `cron_tick` only re-checks tasks once per new minute (`cron.sh:358-365`) |
-| `<plugin>_cleanup` | optional | on SIGHUP (before re-exec) and on process exit (`trap cleanup EXIT INT TERM`, `scheduler.sh:49`) | `claude_session_cleanup` kills the tmux session (`claude_session.sh:690-692`) |
+| `<plugin>_cleanup` | optional | on SIGHUP (before re-exec) and on process exit (`trap cleanup EXIT INT TERM`, `scheduler.sh:49`) | `claude_session_cleanup` kills the tmux session (`claude_session.sh:696-698`) |
 | `<plugin>_on_wake` | optional | when the loop detects a gap greater than `2 * POLL_TIMEOUT` since the last iteration (system sleep/resume) (`scheduler.sh:136-148`) | `telegram_on_wake` clears a stale busy lock and drains the queue (`telegram.sh:139-146`) |
 
 Globals a plugin may rely on (all set by `scheduler.sh` or `lib/common.sh`

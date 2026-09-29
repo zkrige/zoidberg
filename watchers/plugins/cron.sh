@@ -310,7 +310,11 @@ _cron_wait_reply() {
   local output claude_exit
   output=$(bot_channel_wait_reply "$request_id" "$effective_timeout")
   claude_exit=$?
-  if [ $claude_exit -ne 0 ]; then
+  if [ $claude_exit -eq 2 ]; then
+    rm -f "$inflight_lock"
+    log "cron: task '${name}' lost to a session respawn"
+    log_failure "channel_respawn" "$name" "cron"
+  elif [ $claude_exit -ne 0 ]; then
     # Leave the in-flight lock: the run is still executing and blocks re-dispatch.
     log "cron: task '${name}' timed out or failed"
     log_failure "channel_timeout" "$name" "cron" "timeout=${effective_timeout}"

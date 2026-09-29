@@ -146,12 +146,7 @@ jq '
 # the migration never fires at runtime.
 mkdir -p ~/.claude
 if [ ! -f ~/.claude/settings.json ]; then echo '{}' > ~/.claude/settings.json; fi
-jq '
-  .permissions = (.permissions // {}) |
-  .permissions.defaultMode = "bypassPermissions" |
-  .skipDangerousModePermissionPrompt = true |
-  .tui = (.tui // "fullscreen")
-' ~/.claude/settings.json > ~/.claude/settings.json.tmp && mv ~/.claude/settings.json.tmp ~/.claude/settings.json
+jq -f /app/docker/claude-settings.jq ~/.claude/settings.json > ~/.claude/settings.json.tmp && mv ~/.claude/settings.json.tmp ~/.claude/settings.json
 
 # Install bot-channel dependencies (fast if bun cache is warm)
 if [ -f /app/lib/channels/bot-channel/package.json ]; then

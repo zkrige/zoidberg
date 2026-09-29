@@ -288,7 +288,8 @@ bot_channel_post() {
 # ---------------------------------------------------------------------------
 # bot_channel_wait_reply - block until reply file appears
 # Args: request_id  timeout_seconds
-# Echoes reply content to stdout, returns 0 on success, 1 on timeout
+# Echoes reply content to stdout, returns 0 on success, 1 on timeout, 2 when
+# the session respawned mid-wait (the request is dead, not still running)
 # ---------------------------------------------------------------------------
 bot_channel_wait_reply() {
   local request_id="$1" timeout="${2:-600}"
@@ -308,7 +309,7 @@ bot_channel_wait_reply() {
     # instead of blocking out the full timeout.
     if [ -n "$start_gen" ] && [ "$(cat "$gen_file" 2>/dev/null)" != "$start_gen" ]; then
       log "bot_channel_wait_reply: session respawned while waiting for ${request_id} - failing fast after $(( SECONDS - start ))s"
-      return 1
+      return 2
     fi
     sleep 1
   done

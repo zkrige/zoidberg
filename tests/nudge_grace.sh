@@ -52,7 +52,8 @@ tg_edit() { :; }
 CLAUDE_TMUX_SESSION="zoidberg-test"
 tmux() { :; }                                       # wall-timeout sends Escape
 claude_session_is_busy() { return 1; }              # always idle: worst case
-claude_session_last_assistant_uuid() { echo "new"; }
+POLLS="${BOT_CHANNEL_REPLIES_DIR}/polls.log"
+claude_session_last_assistant_uuid() { echo . >> "$POLLS"; echo "new"; }
 claude_session_last_assistant_text() { echo "Compiling a report, will send shortly."; }
 
 request_id="tg-nudge-1"
@@ -61,7 +62,7 @@ NUDGES="${BOT_CHANNEL_REPLIES_DIR}/nudges.log"
 bot_channel_post() { printf '%s\n' "$3" >> "$NUDGES"; }
 
 reset() {
-  rm -f "$reply_file" "$NUDGES" "${BOT_CHANNEL_REPLIES_DIR}/${request_id}".progress.*
+  rm -f "$reply_file" "$NUDGES" "$POLLS" "${BOT_CHANNEL_REPLIES_DIR}/${request_id}".progress.*
   _status_msg_id=""; _baseline_uuid="base"; reply_salvaged=false; _last_progress_time=0
 }
 
@@ -70,6 +71,7 @@ reset() {
 reset; CLAUDE_WALL_TIMEOUT=3
 _telegram_run_stream
 [ "$reply_salvaged" = false ] || fail "salvaged inside the nudge grace"
+[ "$(wc -l < "$POLLS" | tr -d ' ')" -le 20 ] || fail "stream loop busy-spins through the nudge grace instead of sleeping STREAM_INTERVAL"
 [ "$(wc -l < "$NUDGES" | tr -d ' ')" = "1" ] || fail "expected exactly one nudge"
 grep -q 'Do NOT acknowledge or promise again' "$NUDGES" || fail "nudge still invites an acknowledgement"
 grep -q 'background agent is still running' "$NUDGES" || fail "nudge does not cover the background-agent case"

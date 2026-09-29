@@ -106,9 +106,11 @@ delivered `progress` renews patience for `PROGRESS_PATIENCE` (300s) before the
 idle-fallback may fire, and once nudged the loop waits `NUDGE_GRACE` (30s)
 before scraping the transcript, since the salvage otherwise ships the
 acknowledgement the nudge was sent to replace. Both are declared in
-`watchers/plugins/telegram.sh` beside the other stream tunables. The wall-clock
-check runs FIRST in the loop body: those two windows `continue`, so a check
-below them is unreachable while they hold. `tests/nudge_grace.sh` covers it.
+`watchers/plugins/telegram.sh` beside the other stream tunables. Every loop
+iteration, including the waits inside both windows, ends in the
+`STREAM_INTERVAL` sleep; until 2026-09-29 the nudge-grace wait `continue`d past
+it and spun the loop at full CPU (tmux and jq on every pass) for the whole 30s.
+`tests/nudge_grace.sh` covers both windows and the spin.
 
 The session is PERSISTENT: it retains real conversation turns across dispatches,
 and a respawn (deploy SIGHUP, daily container restart) resumes the previous
@@ -224,6 +226,7 @@ detector.
 - `scripts/self-update.sh` - host-cron git-driven deploy (pull + reload/rebuild + skills + content sync)
 - `scripts/scheduled-restart.sh` - host-cron daily container restart (tmux/auth/session hygiene), deferred while a Telegram turn or a cron task is in flight
 - `docker/entrypoint.sh` - container startup (auth check, git config, `exec scheduler.sh`)
+- `docker/claude-settings.jq` - the `~/.claude/settings.json` overlay the entrypoint applies at every start: bypass mode, pre-seeded `tui`, and the `PreModelSwitch` allow hook that keeps `/model` from opening a confirm picker
 - `docker/sync-secret-store.sh` - in-container decrypt of `store/volume-backup/credentials.enc.json` into `~/.claude/config/credentials.json` and `/app/store/credentials.json`; run by the entrypoint at every start and by `scripts/self-update.sh` when the mirrored ciphertext changes
 - `docker/entrypoint.sh` also links `~/.claude/config/resolve-cred.py` to `resolve-cred.py` in the mounted claude-skills repo, so skills resolve credentials from that plaintext `credentials.json` exactly as on the Mac
 - `docker/transcribe` - voice-note transcription (`transcribe <audio-file>` → transcript on stdout), wrapping the whisper.cpp binary baked into the image
@@ -276,9 +279,25 @@ session only ever ran on whatever model it was launched with (persisted in
 `_cron_dispatch_botchannel` (`watchers/plugins/cron.sh:241`) now applies it for
 real, per dispatch, using the CLI's own interactive `/model <name>` and
 `/effort <level>` commands (`claude_session_switch_model`,
-`watchers/plugins/claude_session.sh`) instead of a respawn: both take a direct
-argument and switch immediately, keeping the running conversation and its
-`--continue` context intact. Verified live on 2026-09-27: both also print
+`watchers/plugins/claude_session.sh`) instead of a respawn, keeping the running
+conversation and its `--continue` context intact. `/effort` switches
+immediately. `/model` in a conversation with a warm prompt cache opens a
+"Switch model?" confirm (the history is re-read on the new model), and while
+that picker is open the session enqueues every channel event and dequeues none.
+On 2026-09-29 that wedged the bot on every cron dispatch: the probe saw no
+reply twice, respawned, killed the task, and the next dispatch repeated it.
+`docker/claude-settings.jq` (applied by `docker/entrypoint.sh` at every start)
+installs a `PreModelSwitch` hook answering `permissionDecision: "allow"`, the
+CLI's own documented way to skip that confirm (CLI 2.1.284 hook schema: "allow
+proceeds (skipping the interactive cache-miss confirm)");
+`tests/claude_settings.sh` covers it. Diagnostic signature of a recurrence:
+`queue-operation` `enqueue` records in the transcript with no `dequeue`, and a
+picker on the pane. A cron dispatch whose session respawns mid-wait
+(`bot_channel_wait_reply` returns 2) clears its `state/.<task>.inflight`
+marker, since that run is dead; before 2026-09-29 the marker survived and the
+task skipped every tick for `INFLIGHT_STALE` (30 minutes)
+(`tests/cron_respawn_marker.sh`). A timeout (return 1) still keeps the marker,
+because that run may still be executing. Verified live on 2026-09-27: both commands also print
 "saved as your default for new sessions" - they write the CLI's OWN persisted
 default (not `telegram-model.txt`, which only the bot's `/opus`/`/sonnet`/
 `/haiku` Telegram commands touch), so every switch-and-restore cycle
@@ -317,7 +336,7 @@ for one is dead - `website-stats` and `gsc-fix` carried one until 2026-09-27;
 removed rather than left to imply a model that never runs.
 
 The health probe (`claude_session_health_probe`,
-`watchers/plugins/claude_session.sh:578`) uses the identical
+`watchers/plugins/claude_session.sh:582`) uses the identical
 `claude_session_switch_model` + `MODEL_SWITCH_LOCK` mechanism so a probe and a
 task-model switch can never race each other: its "reply: ok" round trip needs
 no reasoning, so it runs on `session.health_probe_model`/`health_probe_effort`
@@ -514,7 +533,7 @@ credentials before looking at any individual task.
 call returns 401. The authoritative signal is the transcript: the newest
 assistant record carries `isApiErrorMessage: true` with the text
 `Login expired · Please run /login`. `_claude_session_auth_expired`
-(`watchers/plugins/claude_session.sh:452`) reads that record, and
+(`watchers/plugins/claude_session.sh:453`) reads that record, and
 `claude_session_check_auth` sends a debounced Telegram alert on it each tick.
 Rendered pane content cannot forge a transcript record, which is why the check
 lives there instead of in a pane grep (622dd6e). An error record older than

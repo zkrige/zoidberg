@@ -135,10 +135,6 @@ _telegram_run_stream() {
   while [ ! -f "$reply_file" ]; do
     local elapsed=$(( SECONDS - start_time ))
 
-    # Wall-clock check FIRST: the idle-fallback below `continue`s while it waits
-    # out the progress patience and the nudge grace, so a check placed after it
-    # is unreachable for the whole of those windows and the loop cannot be
-    # killed.
     if [ "$elapsed" -ge "$CLAUDE_WALL_TIMEOUT" ]; then
       claude_timed_out=true
       timeout_type="wall"
@@ -186,22 +182,7 @@ _telegram_run_stream() {
             bot_channel_post "$request_id" "telegram" \
               "Your last turn ended without calling the \`reply\` tool, so the owner received nothing. Do NOT acknowledge or promise again. If the work is done, call \`reply\` now with request_id ${request_id} and the actual result, and nothing else. If a background agent is still running, call \`progress\` with what it has produced so far and \`reply\` once it reports." \
               || log "telegram: nudge failed to post for ${request_id}"
-            continue
-          fi
-          # Give the nudge time to land. idle_streak reaches 2 in ~4s, which is
-          # shorter than the model takes to read the nudge and act, so without
-          # this the salvage fires mid-thought and ships the acknowledgement
-          # the nudge was sent to replace (seen 2026-08-30: salvaged at
-          # 13:10:46, the real reply arrived at 13:10:48 and went nowhere).
-          if [ $(( SECONDS - _nudge_time )) -lt "$NUDGE_GRACE" ]; then
-            continue
-          fi
-          local salvaged
-          salvaged=$(claude_session_last_assistant_text)
-          if [ -n "$salvaged" ]; then
-            printf '%s' "$salvaged" > "$reply_file"
-            reply_salvaged=true
-            log "telegram: reply tool not called even after a nudge, salvaged last assistant text (${#salvaged} chars) for ${request_id}"
+          elif [ $(( SECONDS - _nudge_time )) -ge "$NUDGE_GRACE" ] && _telegram_run_salvage; then
             break
           fi
         fi
@@ -210,6 +191,15 @@ _telegram_run_stream() {
 
     sleep "$STREAM_INTERVAL"
   done
+}
+
+_telegram_run_salvage() {
+  local salvaged
+  salvaged=$(claude_session_last_assistant_text)
+  [ -n "$salvaged" ] || return 1
+  printf '%s' "$salvaged" > "$reply_file"
+  reply_salvaged=true
+  log "telegram: reply tool not called even after a nudge, salvaged last assistant text (${#salvaged} chars) for ${request_id}"
 }
 
 # ---------------------------------------------------------------------------
