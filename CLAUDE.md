@@ -577,6 +577,18 @@ touches `docker-compose.yml`, self-update.sh's rebuild gate applies: the next
 deploy tick recreates the container (`docker compose up -d --build
 --force-recreate`), not just a SIGHUP.
 
+`docker-compose.yml` also sets `CLAUDE_CODE_MODEL_CATALOG=0` (added
+2026-10-01). Without it every `/model` this session sends (the health probe's
+switch to haiku every `health_probe_interval`, cron per-task switches, the
+`/opus`/`/sonnet`/`/haiku` commands) PATCHes the account's
+`model_selector_state` on Anthropic's side, and that value is what every other
+Claude Code install on the same login shows as "Default (recommended)". The
+symptom was the owner's Mac picker intermittently reading "Default: Haiku 4.5".
+Verified against the installed CLI 2.1.286: the write is skipped when the served
+catalog is off, and `CLAUDE_CODE_MODEL_CATALOG` set to `0`/`false`/`no`/`off`
+turns it off (`env_off`). Model switching inside the session is unaffected; the
+picker falls back to the CLI's compiled model list.
+
 An earlier claim that auto-compaction is gated off in non-interactive or
 tmux-piped delivery is RETRACTED. It was an inference chained onto the
 credits-gate finding. No commit or log ever isolated compaction behaviour in

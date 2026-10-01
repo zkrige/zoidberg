@@ -113,6 +113,13 @@ actually switch the session"). Because the probe posts on one tick and resolves
 on a later one, the switch-back and lock release happen in
 `_claude_session_release_probe_model`, not inline in the post.
 
+Every `/model` the session runs (probe, per-task switch, `/opus`/`/sonnet`/`/haiku`)
+would otherwise PATCH `/api/organizations/:orgUUID/model_selector_state/cc`,
+which is the account-wide "Default (recommended)" model every other Claude Code
+install on the same login reads. `docker-compose.yml` sets
+`CLAUDE_CODE_MODEL_CATALOG=0`, which turns the served model catalog off in this
+container, so model switches here stay local to the bot's session.
+
 ## Framework and content split
 
 This repo ships only generic scheduling/transport code and a small set of
