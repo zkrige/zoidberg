@@ -276,7 +276,7 @@ session only ever ran on whatever model it was launched with (persisted in
 `state/telegram-model.txt`, applied on the next `claude_session_spawn`), so
 `bitbucket-pr`'s `"opus"` entry was dead configuration.
 
-`_cron_dispatch_botchannel` (`watchers/plugins/cron.sh:241`) now applies it for
+`_cron_dispatch_botchannel` (`watchers/plugins/cron.sh:281`) now applies it for
 real, per dispatch, using the CLI's own interactive `/model <name>` and
 `/effort <level>` commands (`claude_session_switch_model`,
 `watchers/plugins/claude_session.sh`) instead of a respawn, keeping the running
@@ -307,10 +307,15 @@ when the target actually differs from the value passed as "current"
 target already matches the live default sends neither. The switch only fires when
 the task's model/effort differ from the standing default
 (`_claude_session_persisted_model`/`_effort`, reading the same
-`telegram-model.txt`/`telegram-effort.txt` the respawn path uses), and only
-when the session is idle (`claude_session_is_busy`/`BUSY_LOCK`) - if busy, the
-task dispatches on whatever is already active rather than stealing the model
-mid-turn. `MODEL_SWITCH_LOCK` (`${STATE_DIR}/.model-switch.lock`, flock'd on a
+`telegram-model.txt`/`telegram-effort.txt` the respawn path uses).
+`_cron_prepare_session` takes the lock for EVERY dispatch, switch or not, and
+then waits up to `CRON_IDLE_WAIT` (60s) for the session to go idle
+(`claude_session_is_busy`/`BUSY_LOCK`) before it switches and posts. Only a
+session still busy after that dispatches mid-turn on the active model. On
+2026-10-08 the old immediate fallback posted a scheduled task into a running health-probe
+turn on haiku/low: the event arrived as a queued in-turn notice, and haiku
+refused it as external input (`tests/cron_session_prepare.sh`). A dispatch that
+did not switch releases the lock right after its post. `MODEL_SWITCH_LOCK` (`${STATE_DIR}/.model-switch.lock`, flock'd on a
 fixed fd per caller: 8 in the scheduler process for the health probe, 9 in each
 backgrounded cron dispatch) serializes every switch so two dispatchers can
 never interleave `/model`/`/effort` keystrokes into the one shared pane. The
@@ -326,8 +331,11 @@ contended with it, delaying the probe's own resolution enough to trip 17 false
 time as collateral damage. `flock -n` fails instantly instead: if the lock is
 held, the probe just runs on the active model for that cycle rather than
 freezing the loop. After the reply lands
-(or the post/wait fails), the wrapper switches back to the standing default
-before releasing the lock. `bitbucket-pr` and `github-pr-review` are opus in
+(or the post/wait fails), `_cron_restore_session` waits for the task's turn to
+end and then switches back to the standing default before releasing the lock.
+The wait matters because the session keeps writing after its `reply` call, and
+the CLI drops `/effort` typed mid-turn (verified against 2.1.294), which left
+the session on the task's effort. `bitbucket-pr` and `github-pr-review` are opus in
 `models.json`; every other `prompt_file` task falls through to the defaults
 block (sonnet). A `command` task (`website-stats`, `gsc-fix`, `boom`,
 `boom-check-win`, `import-sweep`, `container-restart`) never reaches Claude at
@@ -336,7 +344,7 @@ for one is dead - `website-stats` and `gsc-fix` carried one until 2026-09-27;
 removed rather than left to imply a model that never runs.
 
 The health probe (`claude_session_health_probe`,
-`watchers/plugins/claude_session.sh:582`) uses the identical
+`watchers/plugins/claude_session.sh:577`) uses the identical
 `claude_session_switch_model` + `MODEL_SWITCH_LOCK` mechanism so a probe and a
 task-model switch can never race each other: its "reply: ok" round trip needs
 no reasoning, so it runs on `session.health_probe_model`/`health_probe_effort`
@@ -347,6 +355,22 @@ persistent fd (8, opened once by `claude_session_init`) rather than released
 and reacquired - `_claude_session_release_probe_model` switches back to the
 standing default and releases it on every resolution path (reply landed,
 timed out, or the post itself failed).
+
+Every switch types into the input box, so anything already sitting there
+changes what the keystrokes mean. `_claude_session_accept_dialog` used to
+answer the development-channels warning with `1` and then `Enter`, but `1`
+alone selects and confirms. The Enter reached the REPL while a large
+`--continue` resume was still loading and left a newline in the input box, so
+the first `/model`/`/effort` after a spawn arrived as the plain prompt
+`\n/model haiku` instead of a command: the switch never happened, and the
+session read it as a request. 34 of 47 spawns from 2026-09-27 to 2026-10-08
+leaked their first switch this way, and no leak happened anywhere else. One of
+them, on 2026-09-29, made the session write `haiku` into
+`state/telegram-model.txt`, so every respawn after it and every task without
+its own `models.json` entry ran on haiku. The accept now sends `1` only
+(`tests/accept_dialog.sh`). Diagnostic signature of a recurrence: a transcript
+`user` record whose content is a bare `/model ...` or `/effort ...` string
+instead of a `<command-name>` record.
 
 ## Deployment
 Production is a Docker container (`zoidberg`, scheduler = PID 1) on a Linux

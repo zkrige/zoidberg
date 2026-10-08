@@ -118,16 +118,11 @@ _claude_session_launch_tmux() {
 # _claude_session_accept_dialog - dismiss the dev-channels warning if it appears
 # ---------------------------------------------------------------------------
 _claude_session_accept_dialog() {
-  # Accept the "Loading development channels" warning dialog if it appears
-  # (no documented config flag to suppress it; pressing 1+Enter selects
-  # "I am using this for local development")
   local j
   for j in $(seq 1 10); do
     sleep 1
     if tmux capture-pane -t "$CLAUDE_TMUX_SESSION" -p 2>/dev/null | grep -q "Loading development channels"; then
       tmux send-keys -t "$CLAUDE_TMUX_SESSION" "1"
-      sleep 1
-      tmux send-keys -t "$CLAUDE_TMUX_SESSION" Enter
       log "claude-session: accepted development-channels warning dialog"
       break
     fi

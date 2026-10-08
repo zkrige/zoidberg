@@ -237,6 +237,46 @@ ${output}"
   fi
 }
 
+CRON_IDLE_WAIT="${CRON_IDLE_WAIT:-60}"
+
+_cron_session_idle() {
+  ! claude_session_is_busy && [ ! -e "${BUSY_LOCK:-/tmp/claude-telegram.busy}" ]
+}
+
+_cron_wait_session_idle() {
+  local waited=0
+  until _cron_session_idle; do
+    [ "$waited" -lt "$CRON_IDLE_WAIT" ] || return 1
+    sleep 1
+    waited=$(( waited + 1 ))
+  done
+}
+
+_cron_prepare_session() {
+  local name="$1" model="$2" effort="$3" default_model="$4" default_effort="$5"
+  _CRON_SWITCHED=0
+  if ! flock -w "$MODEL_SWITCH_LOCK_TIMEOUT" 9; then
+    log "cron: model-switch lock timeout for '${name}' - dispatching on the active model"
+    return
+  fi
+  if ! _cron_wait_session_idle; then
+    log "cron: session busy for ${CRON_IDLE_WAIT}s - dispatching '${name}' mid-turn on the active model"
+    return
+  fi
+  [ "$model" != "$default_model" ] || [ "$effort" != "$default_effort" ] || return 0
+  claude_session_switch_model "$model" "$effort" "$default_model" "$default_effort"
+  _CRON_SWITCHED=1
+}
+
+_cron_restore_session() {
+  local model="$1" effort="$2" default_model="$3" default_effort="$4"
+  if [ "$_CRON_SWITCHED" -eq 1 ]; then
+    _cron_wait_session_idle
+    claude_session_switch_model "$default_model" "$default_effort" "$model" "$effort"
+  fi
+  exec 9>&-
+}
+
 # Bot-channel task: post prompt into the interactive session, await reply, notify.
 _cron_dispatch_botchannel() {
   local name="$1" prompt="$2" task_wall_timeout="$3"
@@ -251,38 +291,19 @@ _cron_dispatch_botchannel() {
   local effective_timeout="${task_wall_timeout:-${CLAUDE_WALL_TIMEOUT:-1200}}"
   local request_id="cron-${name}-${current_key}-$$"
 
-  local default_model default_effort switched=0
+  local default_model default_effort
   default_model=$(_claude_session_persisted_model)
   default_effort=$(_claude_session_persisted_effort)
   exec 9>"$MODEL_SWITCH_LOCK"
-  if [ "$model" != "$default_model" ] || [ "$effort" != "$default_effort" ]; then
-    if flock -w "$MODEL_SWITCH_LOCK_TIMEOUT" 9; then
-      if claude_session_is_busy || [ -e "${BUSY_LOCK:-/tmp/claude-telegram.busy}" ]; then
-        log "cron: session busy - dispatching '${name}' on the standing default instead of ${model}/${effort}"
-        flock -u 9
-      else
-        claude_session_switch_model "$model" "$effort" "$default_model" "$default_effort"
-        switched=1
-      fi
-    else
-      log "cron: model-switch lock timeout for '${name}' - dispatching on the active model"
-    fi
-  fi
+  _cron_prepare_session "$name" "$model" "$effort" "$default_model" "$default_effort"
 
   if ! _cron_post "$name" "$request_id" "$prompt" "$inflight_lock"; then
-    if [ "$switched" -eq 1 ]; then
-      claude_session_switch_model "$default_model" "$default_effort" "$model" "$effort"
-      flock -u 9
-    fi
-    exec 9>&-
+    _cron_restore_session "$model" "$effort" "$default_model" "$default_effort"
     return
   fi
+  [ "$_CRON_SWITCHED" -eq 1 ] || flock -u 9
   output=$(_cron_wait_reply "$name" "$request_id" "$effective_timeout" "$inflight_lock")
-  if [ "$switched" -eq 1 ]; then
-    claude_session_switch_model "$default_model" "$default_effort" "$model" "$effort"
-    flock -u 9
-  fi
-  exec 9>&-
+  _cron_restore_session "$model" "$effort" "$default_model" "$default_effort"
 
   echo "$output" >> "${LOGS_DIR}/${name}.log"
   local err_size_after
