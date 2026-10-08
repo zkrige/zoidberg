@@ -9,6 +9,7 @@
 set -euo pipefail
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 LOGS_DIR="/tmp/selfmatch-$$"; STATE_DIR="$LOGS_DIR"; CLAUDE_BIN="claude"
+CLAUDE_CREDENTIALS_FILE="${STATE_DIR}/.credentials.json"
 mkdir -p "$STATE_DIR"
 trap 'rm -rf "$STATE_DIR"' EXIT
 
@@ -70,7 +71,6 @@ if ! _claude_session_auth_expired; then
   echo "FAIL auth-expired: missed a live expired-login error"; exit 1
 fi
 
-CLAUDE_CREDENTIALS_FILE="${STATE_DIR}/.credentials.json"
 touch "$CLAUDE_CREDENTIALS_FILE"
 CRED_MTIME=$(date -r "$CLAUDE_CREDENTIALS_FILE" +%s)
 iso() { jq -rn --argjson t "$1" '$t | todate | sub("Z$"; ".123Z")'; }
