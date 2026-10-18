@@ -609,12 +609,12 @@ claude_session_health_probe() {
   fi
 
   local probe_model probe_effort default_model default_effort
-  probe_model=$(get_config '.session.health_probe_model' 2>/dev/null)
-  [ -n "$probe_model" ] && [ "$probe_model" != "null" ] || probe_model="haiku"
-  probe_effort=$(get_config '.session.health_probe_effort' 2>/dev/null)
-  [ -n "$probe_effort" ] && [ "$probe_effort" != "null" ] || probe_effort="low"
   default_model=$(_claude_session_persisted_model)
   default_effort=$(_claude_session_persisted_effort)
+  probe_model=$(get_config '.session.health_probe_model' 2>/dev/null)
+  [ -n "$probe_model" ] && [ "$probe_model" != "null" ] || probe_model="$default_model"
+  probe_effort=$(get_config '.session.health_probe_effort' 2>/dev/null)
+  [ -n "$probe_effort" ] && [ "$probe_effort" != "null" ] || probe_effort="$default_effort"
   if [ "$probe_model" != "$default_model" ] || [ "$probe_effort" != "$default_effort" ]; then
     if flock -n 8; then
       claude_session_switch_model "$probe_model" "$probe_effort" "$default_model" "$default_effort"

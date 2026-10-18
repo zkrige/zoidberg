@@ -104,10 +104,10 @@ no reply - respawn after `max_strikes` consecutive failures) from
 `isApiErrorMessage` login-expired error - alert instead of respawn-looping,
 `_claude_session_auth_expired`, lines 453-467).
 
-The probe itself needs no reasoning ("reply: ok"), so it runs on
-`session.health_probe_model`/`health_probe_effort` (`config.json`, default
-`haiku`/`low`) rather than the session's standing default, switched via the
-same `claude_session_switch_model` + `MODEL_SWITCH_LOCK` mechanism that
+The probe runs on the session's standing model and effort. Setting
+`session.health_probe_model`/`health_probe_effort` in `config.json` makes it
+switch first, via the same `claude_session_switch_model` + `MODEL_SWITCH_LOCK`
+mechanism that
 `cron.sh` uses for per-task model/effort (see CLAUDE.md, "Per-task model/effort
 actually switch the session"). Because the probe posts on one tick and resolves
 on a later one, the switch-back and lock release happen in

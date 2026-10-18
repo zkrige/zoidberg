@@ -346,9 +346,16 @@ removed rather than left to imply a model that never runs.
 The health probe (`claude_session_health_probe`,
 `watchers/plugins/claude_session.sh:577`) uses the identical
 `claude_session_switch_model` + `MODEL_SWITCH_LOCK` mechanism so a probe and a
-task-model switch can never race each other: its "reply: ok" round trip needs
-no reasoning, so it runs on `session.health_probe_model`/`health_probe_effort`
-(`config.json`, default `haiku`/`low`) instead of the standing default. Because
+task-model switch can never race each other. It runs on the standing model
+and effort, and switches only when `config.json` sets
+`session.health_probe_model`/`health_probe_effort` to something else. The
+default was `haiku`/`low` until 2026-10-18. The CLI opens a "Change effort
+level?" cache-miss confirm on `/effort` that the `PreModelSwitch` allow hook
+does not skip (observed on CLI 2.1.302); the probe sat
+behind it, and the switch-back keystrokes landed in the picker: its `Enter`
+accepted "switch to low" and the `/model` back was lost, so every later turn,
+Telegram included, ran on haiku (`tests/health_probe_model.sh`). Every probe
+switch also re-read the whole conversation uncached on both models. Because
 the probe posts on one scheduler tick and resolves (reply lands, or times out)
 on a later one, the lock is acquired at post time and held across ticks via a
 persistent fd (8, opened once by `claude_session_init`) rather than released
@@ -603,7 +610,7 @@ deploy tick recreates the container (`docker compose up -d --build
 
 `docker-compose.yml` also sets `CLAUDE_CODE_MODEL_CATALOG=0` (added
 2026-10-01). Without it every `/model` this session sends (the health probe's
-switch to haiku every `health_probe_interval`, cron per-task switches, the
+switch, when one is configured, cron per-task switches, the
 `/opus`/`/sonnet`/`/haiku` commands) PATCHes the account's
 `model_selector_state` on Anthropic's side, and that value is what every other
 Claude Code install on the same login shows as "Default (recommended)". The
