@@ -286,13 +286,14 @@ func (c *Client) GetProfilePicture(jidStr string, preview bool) (*localTypes.Pro
 
 // GetBlockedUsers returns the list of currently blocked users.
 func (c *Client) GetBlockedUsers() ([]localTypes.BlockedUser, error) {
-	blocklist, err := c.GetBlocklist(context.Background())
+	blocklist, err := c.GetBlocklist(context.Background(), "")
 	if err != nil {
 		return nil, fmt.Errorf("failed to get blocklist: %v", err)
 	}
 
-	users := make([]localTypes.BlockedUser, len(blocklist.JIDs))
-	for i, jid := range blocklist.JIDs {
+	jids := blocklist.LIDs()
+	users := make([]localTypes.BlockedUser, len(jids))
+	for i, jid := range jids {
 		users[i] = localTypes.BlockedUser{JID: jid.String()}
 	}
 	return users, nil
@@ -316,7 +317,7 @@ func (c *Client) UpdateBlockedUser(jidStr string, action string) error {
 		return fmt.Errorf("invalid action: %s (must be 'block' or 'unblock')", action)
 	}
 
-	_, err = c.UpdateBlocklist(context.Background(), jid, blockAction)
+	_, err = c.UpdateBlocklist(context.Background(), jid, blockAction, "")
 	if err != nil {
 		return fmt.Errorf("failed to update blocklist: %v", err)
 	}
@@ -394,7 +395,7 @@ func (c *Client) SendTypingIndicator(chatJID string, state string) error {
 // SetAboutText updates the user's profile "About" status text.
 // This is the text shown in the profile, not ephemeral status broadcasts.
 func (c *Client) SetAboutText(text string) error {
-	return c.SetStatusMessage(context.Background(), text)
+	return c.SetStatusMessage(context.Background(), types.SetStatusInput{Text: &text})
 }
 
 // SetDisappearingTimer sets the disappearing messages timer for a chat.

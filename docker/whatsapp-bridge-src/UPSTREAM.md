@@ -36,6 +36,15 @@ Each patch is a separate commit after the pristine-vendor commit.
    inbound media to the store volume is gated behind `AUTO_DOWNLOAD_MEDIA`
    (truthy `1`/`true`), default off.
 
+4. `bridge: bump whatsmeow past the 405 "Client outdated" cutoff`
+   `go.mod`/`go.sum`: whatsmeow `b2b1e71d45e2` (2026-10-17). The upstream pin
+   (`595ceb0c22bf`, 2026-06-02) was refused by WhatsApp from 2026-10-19 with
+   `Client outdated (405)`. `internal/whatsapp/client.go` follows the API
+   changes: `GetBlocklist`/`UpdateBlocklist` take a dhash (`""` for the full
+   list), the blocklist is read through `LIDs()`, and `SetStatusMessage` takes
+   `types.SetStatusInput`. A re-vendor that pins an older whatsmeow needs this
+   reapplied.
+
 Note: the outgoing document `FileName` (from the media path basename) is already
 set upstream via `documentFileName()` in `internal/whatsapp/messages.go`, so no
 separate patch is needed for it.
