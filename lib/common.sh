@@ -10,6 +10,12 @@
 # Callers should set their own SCRIPT_DIR before sourcing if needed.
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+GIT_REMOTE_TIMEOUT="${GIT_REMOTE_TIMEOUT:-120}"
+
+git_remote() {
+  timeout -k 5 "$GIT_REMOTE_TIMEOUT" git "$@"
+}
+
 # ---------------------------------------------------------------------------
 # parse_stdin - Read hook JSON from stdin and set HOOK_COMMAND / HOOK_CWD.
 # Usage: echo '{"hook_command":"git push","cwd":"/tmp"}' | parse_stdin

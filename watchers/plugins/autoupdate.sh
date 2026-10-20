@@ -64,7 +64,7 @@ autoupdate_tick() {
   # before any tick runs) and no-ops when the tree is clean.
   command -v telegram_auto_push >/dev/null 2>&1 && telegram_auto_push
 
-  git -C "$REPO_DIR" fetch origin main >/dev/null 2>&1 || {
+  git_remote -C "$REPO_DIR" fetch origin main >/dev/null 2>&1 || {
     log "autoupdate: git fetch failed"
     return
   }
@@ -94,7 +94,7 @@ autoupdate_tick() {
   fi
 
   local pull_output pull_exit
-  pull_output=$(git -C "$REPO_DIR" pull --rebase origin main 2>&1)
+  pull_output=$(git_remote -C "$REPO_DIR" pull --rebase origin main 2>&1)
   pull_exit=$?
 
   if [ $pull_exit -eq 0 ]; then
@@ -108,7 +108,7 @@ autoupdate_tick() {
     # If auto-push raced a remote update its push was rejected; the commit
     # survived and was just rebased, so flush it now.
     if [ "$ahead" != "0" ]; then
-      git -C "$REPO_DIR" push origin main 2>/dev/null \
+      git_remote -C "$REPO_DIR" push origin main 2>/dev/null \
         && log "autoupdate: pushed ${ahead} rebased local commits"
     fi
     return

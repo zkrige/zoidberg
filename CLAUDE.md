@@ -473,6 +473,14 @@ are NOT pulled at all (no docker CLI or socket in the container),
 everything else is pulled and left alone. The patterns must stay identical to
 the host's; `tests/autoupdate_class.sh` asserts the classification.
 
+Every remote git call the scheduler makes in its own loop (autoupdate's fetch,
+pull and push, and `telegram_auto_push`) goes through `git_remote`
+(`lib/common.sh`), which kills it, ssh child included, after
+`GIT_REMOTE_TIMEOUT` (120s). On 2026-10-20 an unbounded `git fetch` hung on
+its ssh to the remote for 1h42m. PID 1 runs one loop, so Telegram polling
+stopped with it, and a `/login` sent while the session's OAuth had expired
+was never read. `tests/git_remote_timeout.sh` covers plain and captured output.
+
 `scripts/scheduled-restart.sh` (host cron, daily) restarts the container to
 reset tmux, auth and session state.
 

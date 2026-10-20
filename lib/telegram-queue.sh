@@ -170,7 +170,7 @@ telegram_auto_push() {
       local summary
       summary=$(git -C "$repo_dir" diff --cached --stat | tail -1)
       git -C "$repo_dir" commit -m "auto: bot update ($summary)" 2>/dev/null || continue
-      if git -C "$repo_dir" push origin main 2>/dev/null; then
+      if git_remote -C "$repo_dir" push origin main 2>/dev/null; then
         local repo_name
         repo_name=$(basename "$(git -C "$repo_dir" remote get-url origin)" .git)
         pushed="${pushed:+${pushed}, }${repo_name}"
