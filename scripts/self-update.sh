@@ -20,6 +20,7 @@ REPO_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${REPO_PATH}/lib/paths.sh"
 resolve_host_paths
 source "${REPO_PATH}/lib/repo-sync.sh"
+source "${REPO_PATH}/lib/content-reload.sh"
 
 UPDATE_FAILED=0
 
@@ -120,7 +121,7 @@ if [ -d "$CONTENT_PATH/.git" ]; then
     # running session until it respawns. Without this it waited for the daily
     # restart. Task prompts and scripts are read fresh at dispatch and need no
     # reload, so only agents/ triggers one.
-    if git diff --name-only "$SYNC_LOCAL" "$SYNC_REMOTE" | grep -qE '^agents/'; then
+    if content_prompts_changed . "$SYNC_LOCAL" "$SYNC_REMOTE"; then
       echo "[self-update] content prompts changed, reloading via SIGHUP"
       docker kill --signal=HUP zoidberg 2>&1 || true
     fi

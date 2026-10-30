@@ -26,7 +26,7 @@ notify() { :; }
 
 source "${REPO_DIR}/watchers/plugins/claude_session.sh"
 
-PLUGIN_SOURCE=$(cat "${REPO_DIR}/watchers/plugins/claude_session.sh")
+PLUGIN_SOURCE=$(cat "${REPO_DIR}/watchers/plugins/claude_session.sh" "${REPO_DIR}"/watchers/plugins/claude_session/*.sh)
 
 # --- picker check: must not fire on this file's own source ------------------
 FIXTURE="$PLUGIN_SOURCE"

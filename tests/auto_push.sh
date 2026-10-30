@@ -82,4 +82,54 @@ grep -q 'git pull --rebase origin main' "$ALERTS" || fail "alert does not name t
 grep -qi 'conflict' "$ALERTS" || fail "alert does not carry the error line: $(cat "$ALERTS")"
 echo "ok rebase conflict aborts the rebase, keeps the commit and alerts once"
 
+start_scheduler_stub() {
+  : > "$WORK/hup"
+  bash -c "trap 'echo hup >> \"$WORK/hup\"' HUP; : > \"$WORK/up\"; while :; do sleep 0.1; done" &
+  SCHEDULER_PID=$!
+  export SCHEDULER_PID
+  until [ -e "$WORK/up" ]; do sleep 0.05; done
+}
+stop_scheduler_stub() {
+  kill "$SCHEDULER_PID"
+  wait "$SCHEDULER_PID" 2>/dev/null || true
+  rm -f "$WORK/up"
+}
+hup_count() { sleep 0.3; wc -l < "$WORK/hup" | tr -d ' '; }
+
+push_from_other() {
+  mkdir -p "$WORK/other/$(dirname "$1")"
+  printf 'from the mac\n' > "$WORK/other/$1"
+  git -C "$WORK/other" add -A
+  git -C "$WORK/other" commit -q -m "mac commit"
+  git -C "$WORK/other" push -q origin main
+}
+
+new_world
+start_scheduler_stub
+push_from_other agents/prompt.txt
+printf 'edited\n' > "$WORK/content/note.txt"
+auto_push
+[ "$(hup_count)" = 1 ] || fail "rebase that pulled an agents/ change sent $(hup_count) SIGHUPs, want 1"
+[ "$(origin_file note.txt)" = edited ] || fail "bot edit not pushed after the reload"
+stop_scheduler_stub
+echo "ok rebase that pulls an agents/ change reloads the scheduler once"
+
+new_world
+start_scheduler_stub
+push_from_other scripts/task.sh
+printf 'edited\n' > "$WORK/content/note.txt"
+auto_push
+[ "$(hup_count)" = 0 ] || fail "rebase that pulled only scripts/ sent a SIGHUP"
+stop_scheduler_stub
+echo "ok rebase that pulls no agents/ change sends no SIGHUP"
+
+new_world
+start_scheduler_stub
+mkdir -p "$WORK/content/agents"
+printf 'bot prompt\n' > "$WORK/content/agents/own.txt"
+auto_push
+[ "$(hup_count)" = 0 ] || fail "bot's own agents/ edit with nothing incoming sent a SIGHUP"
+stop_scheduler_stub
+echo "ok nothing incoming sends no SIGHUP"
+
 echo "PASS auto_push"

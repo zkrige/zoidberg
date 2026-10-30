@@ -196,7 +196,7 @@ detector.
 
 ## Key files
 - `watchers/scheduler.sh` - thin orchestrator (lock, wake detection, SIGHUP reload, plugin loader)
-- `watchers/plugins/claude_session.sh` - always-on interactive session + bot-channel transport
+- `watchers/plugins/claude_session.sh` - always-on interactive session: spawn, tick, busy scrape. Sources `watchers/plugins/claude_session/` (a subdirectory, so the plugin loader's `*.sh` glob does not treat the parts as plugins): `bot_channel.sh` (post, wait, request), `model.sh` (pending switch, `claude_session_switch_model`), `auth.sh` (expired-login alert), `health.sh` (health probe)
 - `watchers/plugins/telegram.sh` - Telegram bot plugin (polling, queue, streaming, commands)
 - `watchers/plugins/cron.sh` - cron engine (schedule matching, pre_check gates, dispatch)
 - `watchers/plugins/whatsapp.sh` - WhatsApp webhook plugin (instant dispatch on self-chat)
@@ -207,6 +207,7 @@ detector.
 - `lib/auto-push.sh` - `auto_push`: commit and push the bot's edits in `/app`, the skills repo and the content repo (rebase first for the content repo)
 - `lib/repo-sync.sh` - `sync_repo` for `scripts/self-update.sh`: fetch, stash, ff-only pull, pop, with one deduplicated Telegram alert per distinct failure and one on recovery
 - `lib/git-failure.sh` - `git_failure_message`: the `<repo> failed: <command>: <first error line>` text both of the above send
+- `lib/content-reload.sh` - `content_prompts_changed`: whether a commit range touched `agents/`, shared by `scripts/self-update.sh` and `auto_push`
 - `lib/paths.sh` - host-side path resolution and the `.env` reader/writer, shared by `install.sh`, `setup.sh` and `scripts/self-update.sh`
 - `lib/telegram-*.sh` - Telegram plugin helpers: `-api` (Bot API), `-commands`, `-md` (markdown), `-process`, `-queue`, `-run` (dispatch/stream), `-session` (sessions/history/prompt-sections)
 - `lib/whatsapp-dispatch.sh` - WhatsApp triage dispatcher (called by the webhook listener)
@@ -282,7 +283,7 @@ session only ever ran on whatever model it was launched with (persisted in
 `_cron_dispatch_botchannel` (`watchers/plugins/cron.sh:281`) now applies it for
 real, per dispatch, using the CLI's own interactive `/model <name>` and
 `/effort <level>` commands (`claude_session_switch_model`,
-`watchers/plugins/claude_session.sh`) instead of a respawn, keeping the running
+`watchers/plugins/claude_session/model.sh`) instead of a respawn, keeping the running
 conversation and its `--continue` context intact. `/effort` switches
 immediately. `/model` in a conversation with a warm prompt cache opens a
 "Switch model?" confirm (the history is re-read on the new model), and while
@@ -347,7 +348,7 @@ for one is dead - `website-stats` and `gsc-fix` carried one until 2026-09-27;
 removed rather than left to imply a model that never runs.
 
 The health probe (`claude_session_health_probe`,
-`watchers/plugins/claude_session.sh:577`) uses the identical
+`watchers/plugins/claude_session/health.sh:91`) uses the identical
 `claude_session_switch_model` + `MODEL_SWITCH_LOCK` mechanism so a probe and a
 task-model switch can never race each other. It runs on the standing model
 and effort, and switches only when `config.json` sets
@@ -474,7 +475,7 @@ So a `git push` to `main` is the entire deploy - the host applies it within 5
 minutes. The bot also auto-pushes its own changes; `autoupdate.sh` is an
 in-container backstop, not the primary mechanism.
 
-`auto_push` (`lib/auto-push.sh`) commits (`auto: bot update (<diffstat>)`) and pushes what Claude left in `/app`, the skills repo and the content repo (`CONTENT_DIR`). It runs when a Telegram turn finalizes (`_telegram_run_finalize`), when `bot_channel_wait_reply` returns a reply (which covers scheduled prompt tasks, WhatsApp triage, self-evolve and `/retry`), and from `autoupdate_tick` every 5 minutes as the catch-all. One `flock` (`AUTO_PUSH_LOCK`) serialises the callers. For the content repo only, `git pull --rebase origin main` runs between commit and push so a commit made elsewhere in the meantime does not reject the push; a rebase conflict runs `git rebase --abort`, keeps the local commit and sends a Telegram alert in the same `<repo> failed: <command>: <first error line>` shape as self-update. A tree dirtied by an untracked build artefact is the content repo's `.gitignore` to handle (`__pycache__/`). A pull that `auto_push` makes inside the container leaves the host's `self-update.sh` nothing to pull, so an `agents/` change that arrived that way waits for the next respawn instead of the immediate SIGHUP. `tests/auto_push.sh` covers push, ignored files, a concurrent origin commit and a rebase conflict.
+`auto_push` (`lib/auto-push.sh`) commits (`auto: bot update (<diffstat>)`) and pushes what Claude left in `/app`, the skills repo and the content repo (`CONTENT_DIR`). It runs when a Telegram turn finalizes (`_telegram_run_finalize`), when `bot_channel_wait_reply` returns a reply (which covers scheduled prompt tasks, WhatsApp triage, self-evolve and `/retry`), and from `autoupdate_tick` every 5 minutes as the catch-all. One `flock` (`AUTO_PUSH_LOCK`) serialises the callers. For the content repo only, `git pull --rebase origin main` runs between commit and push so a commit made elsewhere in the meantime does not reject the push; a rebase conflict runs `git rebase --abort`, keeps the local commit and sends a Telegram alert in the same `<repo> failed: <command>: <first error line>` shape as self-update. A tree dirtied by an untracked build artefact is the content repo's `.gitignore` to handle (`__pycache__/`). A pull that `auto_push` makes inside the container leaves the host's `self-update.sh` nothing to pull, so when the rebase brings in commits touching `agents/` (`content_prompts_changed`, the same check `self-update.sh` uses) `auto_push` sends the SIGHUP itself, to `SCHEDULER_PID` (default 1). `tests/auto_push.sh` covers push, ignored files, a concurrent origin commit, a rebase conflict, and the reload with and without incoming `agents/` changes.
 
 The two race harmlessly for build changes now (the marker gate fires no matter
 who pulled), but `autoupdate.sh` still classifies the incoming range with the
@@ -583,7 +584,7 @@ credentials before looking at any individual task.
 call returns 401. The authoritative signal is the transcript: the newest
 assistant record carries `isApiErrorMessage: true` with the text
 `Login expired · Please run /login`. `_claude_session_auth_expired`
-(`watchers/plugins/claude_session.sh:453`) reads that record, and
+(`watchers/plugins/claude_session/auth.sh:28`) reads that record, and
 `claude_session_check_auth` sends a debounced Telegram alert on it each tick.
 Rendered pane content cannot forge a transcript record, which is why the check
 lives there instead of in a pane grep (622dd6e). An error record older than
@@ -689,7 +690,7 @@ A pane scrape has three correct shapes, chosen by where the signal lives:
    auth check does with the transcript's `isApiErrorMessage` record.
 3. On screen only, such as an unanswered option picker. It must be scraped, so
    assemble the pattern from fragments to keep the literal out of the file.
-   `tests/session_self_match.sh` uses `claude_session.sh`'s own source as a
+   `tests/session_self_match.sh` uses `claude_session.sh`'s own source and its `claude_session/` parts as a
    negative fixture and asserts no grepped literal appears in it. It immediately
    caught an explanatory comment reintroducing one.
 

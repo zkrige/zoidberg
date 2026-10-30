@@ -46,7 +46,7 @@ advance_origin() {
 make_repo zoidberg
 mkdir -p "$WORK/zoidberg/scripts" "$WORK/zoidberg/lib" "$WORK/zoidberg/state"
 cp "$SRC/scripts/self-update.sh" "$WORK/zoidberg/scripts/"
-cp "$SRC"/lib/{paths,repo-sync,git-failure,setup-telegram}.sh "$WORK/zoidberg/lib/"
+cp "$SRC"/lib/{paths,repo-sync,git-failure,content-reload,setup-telegram}.sh "$WORK/zoidberg/lib/"
 publish zoidberg "install updater"
 make_repo claude-skills
 printf '#!/bin/bash\nexit 0\n' > "$WORK/claude-skills/setup.sh"

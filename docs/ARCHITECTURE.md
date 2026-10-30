@@ -19,7 +19,7 @@ finishes by calling a `reply` tool, which ends the request.
 | Component | File | Responsibility |
 |---|---|---|
 | Scheduler orchestrator | `watchers/scheduler.sh` | Singleton lock, plugin discovery/gating, lifecycle dispatch, SIGHUP reload, wake detection, hourly log rotation, main loop |
-| Core plugin: session/transport | `watchers/plugins/claude_session.sh` | Owns the tmux session, the bot-channel POST/wait helpers, session health probing, model switching |
+| Core plugin: session/transport | `watchers/plugins/claude_session.sh` and `watchers/plugins/claude_session/` | Owns the tmux session; the sourced parts hold the bot-channel POST/wait helpers (`bot_channel.sh`), model switching (`model.sh`), the expired-login check (`auth.sh`) and session health probing (`health.sh`) |
 | Core plugin: cron engine | `watchers/plugins/cron.sh` | Cron-expression matching, `pre_check` gates, dispatch of `command` and `prompt_file` tasks |
 | Core plugin: autoupdate | `watchers/plugins/autoupdate.sh` | In-container `git fetch`/`pull --rebase` backstop, `auto_push` (`lib/auto-push.sh`) of bot-authored edits every 5 minutes, ownership-drift healing, reload-or-defer on the pulled range |
 | Optional plugin: Telegram | `watchers/plugins/telegram.sh` (+ `lib/telegram-*.sh`) | Long-polls the Bot API, queues/streams messages, implements `/`-commands |
@@ -51,7 +51,7 @@ independent callers, in exchange for that billing model.
 
 ### How a plugin dispatches
 
-1. A plugin (cron, telegram, whatsapp) calls `bot_channel_post <request_id> <kind> <content>` (`watchers/plugins/claude_session.sh:270-286`), which POSTs JSON `{request_id, kind, content}` to `http://127.0.0.1:8790/`.
+1. A plugin (cron, telegram, whatsapp) calls `bot_channel_post <request_id> <kind> <content>` (`watchers/plugins/claude_session/bot_channel.sh:8-25`), which POSTs JSON `{request_id, kind, content}` to `http://127.0.0.1:8790/`.
 2. The bot-channel MCP server (`lib/channels/bot-channel/server.ts`, a Bun process registered as an MCP server inside the same `claude` invocation) receives the POST in its `Bun.serve` HTTP handler (lines 108-147) and turns it into an MCP notification `notifications/claude/channel` (lines 139-142), with `meta.request_id` and `meta.kind` attached.
 3. Claude Code renders that notification to the live session as a `<channel source="bot-channel" request_id="..." kind="...">` message (per the server's `instructions` block, lines 39-48).
 4. The caller then calls `bot_channel_wait_reply <request_id> <timeout>` (lines 294-318), which polls for a reply file at `${BOT_CHANNEL_REPLIES_DIR}/<request_id>.txt` (default `~/.claude/channels/bot-channel/replies/`, `server.ts:28`).
@@ -60,10 +60,10 @@ independent callers, in exchange for that billing model.
 
 If the session is torn down mid-wait (a SIGHUP reload, a respawn), a
 monotonically increasing generation marker at `state/.session-generation`
-(written on every `claude_session_spawn`, `claude_session.sh:232`) lets
+(written on every `claude_session_spawn`, `claude_session.sh:233`) lets
 `bot_channel_wait_reply` detect that the request it is waiting on can never be
 answered and fail fast instead of blocking out the full timeout
-(`claude_session.sh:306-313`), returning 2 so a cron caller can clear its
+(`claude_session/bot_channel.sh:44-51`), returning 2 so a cron caller can clear its
 in-flight marker.
 
 ### Persistence and context management
@@ -95,14 +95,14 @@ session is otherwise alive, that is the cause, and
 standard window.
 
 A non-blocking health probe (`claude_session_health_probe`,
-`claude_session.sh:582-646`) periodically posts a synthetic channel event and
+`claude_session/health.sh:91-155`) periodically posts a synthetic channel event and
 checks for its reply on later scheduler ticks, distinguishing "busy" (fresh
 transcript writes within the probe window,
-`_claude_session_transcript_fresh`, lines 511-517) from "wedged" (no writes,
+`_claude_session_transcript_fresh`, `claude_session/health.sh:20-27`) from "wedged" (no writes,
 no reply - respawn after `max_strikes` consecutive failures) from
 "auth-expired" (the transcript's newest assistant record is an
 `isApiErrorMessage` login-expired error - alert instead of respawn-looping,
-`_claude_session_auth_expired`, lines 453-467).
+`_claude_session_auth_expired`, `claude_session/auth.sh:28-42`).
 
 The probe runs on the session's standing model and effort. Setting
 `session.health_probe_model`/`health_probe_effort` in `config.json` makes it
@@ -218,7 +218,7 @@ Lifecycle hooks, named `<plugin>_<hook>`, called by the orchestrator:
 |---|---|---|---|
 | `<plugin>_init` | optional | once, after all plugins are sourced (`scheduler.sh:110-114`); non-zero return is logged but the plugin stays loaded ("may be degraded") | `cron_init` checks `SCHEDULE_FILE` exists (`cron.sh:347-354`) |
 | `<plugin>_tick` | **required** | every main-loop iteration, no interval built in - plugins self-throttle | `autoupdate_tick` checks its own `_AUTOUPDATE_INTERVAL` (`autoupdate.sh:50-56`); `cron_tick` only re-checks tasks once per new minute (`cron.sh:358-365`) |
-| `<plugin>_cleanup` | optional | on SIGHUP (before re-exec) and on process exit (`trap cleanup EXIT INT TERM`, `scheduler.sh:49`) | `claude_session_cleanup` kills the tmux session (`claude_session.sh:696-698`) |
+| `<plugin>_cleanup` | optional | on SIGHUP (before re-exec) and on process exit (`trap cleanup EXIT INT TERM`, `scheduler.sh:49`) | `claude_session_cleanup` kills the tmux session (`claude_session.sh:367-369`) |
 | `<plugin>_on_wake` | optional | when the loop detects a gap greater than `2 * POLL_TIMEOUT` since the last iteration (system sleep/resume) (`scheduler.sh:136-148`) | `telegram_on_wake` clears a stale busy lock and drains the queue (`telegram.sh:139-146`) |
 
 Globals a plugin may rely on (all set by `scheduler.sh` or `lib/common.sh`
@@ -318,7 +318,10 @@ Telegram message (repo, command, first error line), makes the script exit non-ze
 and is not repeated until the failure changes. One message follows when the repo
 syncs cleanly again. The bot's own edits in the repos reach their remotes through
 `auto_push` (`lib/auto-push.sh`) after each Claude turn, so the working trees are
-clean when `sync_repo` runs.
+clean when `sync_repo` runs. When the content repo's rebase inside `auto_push` brings in
+commits that touch `agents/`, `auto_push` sends SIGHUP to the scheduler itself, because
+the host's `sync_repo` will find HEAD equal to origin and never reload. Both paths ask
+`content_prompts_changed` (`lib/content-reload.sh`).
 
 `/reload` (Telegram command, `kill -HUP 1`) and `/restart` (`kill -TERM 1`)
 give an operator the same two levers manually: `/reload` re-execs the

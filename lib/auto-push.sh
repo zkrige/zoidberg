@@ -1,5 +1,6 @@
 #!/bin/bash
 source "$(dirname "${BASH_SOURCE[0]}")/git-failure.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/content-reload.sh"
 
 AUTO_PUSH_LOCK="${AUTO_PUSH_LOCK:-/tmp/zoidberg-auto-push.lock}"
 AUTO_PUSH_LOCK_WAIT=300
@@ -12,10 +13,18 @@ _auto_push_repo_name() {
   basename "$(git -C "$1" remote get-url origin)" .git
 }
 
+_auto_push_reload_for_prompts() {
+  content_prompts_changed "$1" "$2" origin/main || return 0
+  log "auto-push: content prompts changed, reloading via SIGHUP"
+  kill -HUP "${SCHEDULER_PID:-1}"
+}
+
 _auto_push_rebase() {
-  local repo_dir="$1" out
+  local repo_dir="$1" out base
   [ "$repo_dir" = "$(_auto_push_content_dir)" ] || return 0
+  base=$(git -C "$repo_dir" merge-base HEAD origin/main)
   if out=$(git_remote -C "$repo_dir" pull --rebase origin main 2>&1); then
+    _auto_push_reload_for_prompts "$repo_dir" "$base"
     return 0
   fi
   git -C "$repo_dir" rebase --abort 2>/dev/null
