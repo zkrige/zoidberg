@@ -21,7 +21,7 @@ finishes by calling a `reply` tool, which ends the request.
 | Scheduler orchestrator | `watchers/scheduler.sh` | Singleton lock, plugin discovery/gating, lifecycle dispatch, SIGHUP reload, wake detection, hourly log rotation, main loop |
 | Core plugin: session/transport | `watchers/plugins/claude_session.sh` | Owns the tmux session, the bot-channel POST/wait helpers, session health probing, model switching |
 | Core plugin: cron engine | `watchers/plugins/cron.sh` | Cron-expression matching, `pre_check` gates, dispatch of `command` and `prompt_file` tasks |
-| Core plugin: autoupdate | `watchers/plugins/autoupdate.sh` | In-container `git fetch`/`pull --rebase` backstop, auto-push of bot-authored commits, ownership-drift healing, reload-or-defer on the pulled range |
+| Core plugin: autoupdate | `watchers/plugins/autoupdate.sh` | In-container `git fetch`/`pull --rebase` backstop, `auto_push` (`lib/auto-push.sh`) of bot-authored edits every 5 minutes, ownership-drift healing, reload-or-defer on the pulled range |
 | Optional plugin: Telegram | `watchers/plugins/telegram.sh` (+ `lib/telegram-*.sh`) | Long-polls the Bot API, queues/streams messages, implements `/`-commands |
 | Optional plugin: WhatsApp | `watchers/plugins/whatsapp.sh` (+ `lib/whatsapp-dispatch.sh`) | Webhook listener, instant self-chat triage dispatch |
 | Bot-channel MCP transport | `lib/channels/bot-channel/server.ts` | HTTP listener on `127.0.0.1:8790`; forwards events into the live session as an MCP notification; exposes the `reply` tool (final, ends the request) and the `progress` tool (interim, keeps it open) |
@@ -305,13 +305,20 @@ since `docker/` matches that path glob) - a SIGHUP reload cannot pick it up,
 because SIGHUP only re-execs the already-running `scheduler.sh` process; it
 never re-runs the entrypoint.
 
-`scripts/self-update.sh` also mirrors the same fetch/stash/pull-pop pattern for
+`scripts/self-update.sh` runs the same `sync_repo` (`lib/repo-sync.sh`: fetch, stash, ff-only pull, pop) for
 two sibling bind-mounted repos, the skills repo (`$SKILLS_PATH`) and the content
 repo (`$CONTENT_PATH`), running each one's `setup.sh` if present after a pull
 (`scripts/self-update.sh`). Both paths come from `resolve_host_paths`
 (`lib/paths.sh`), which reads the repo's `.env`, so the rebuild it triggers
 mounts the same directories the install actually uses rather than compose's
 built-in defaults.
+
+A failed fetch, pull or stash pop, or a repo left mid-merge or mid-rebase, sends one
+Telegram message (repo, command, first error line), makes the script exit non-zero
+and is not repeated until the failure changes. One message follows when the repo
+syncs cleanly again. The bot's own edits in the repos reach their remotes through
+`auto_push` (`lib/auto-push.sh`) after each Claude turn, so the working trees are
+clean when `sync_repo` runs.
 
 `/reload` (Telegram command, `kill -HUP 1`) and `/restart` (`kill -TERM 1`)
 give an operator the same two levers manually: `/reload` re-execs the

@@ -18,6 +18,6 @@ while IFS=$'\t' read -r pf pc; do
 done < <(jq -r '.tasks[] | [(.prompt_file//"-"),(.pre_check//"-")] | @tsv' "$(content_path schedule.json)")
 # command-referenced config/scripts resolve
 for s in $(jq -r '.tasks[].command // empty' "$(content_path schedule.json)" | grep -oE 'scripts/[A-Za-z0-9_.-]+' | sort -u); do
-  [ -f "${CONTENT_DIR}/${s}" ] || { echo "MISS command script $s"; fail=1; }
+  [ -e "${CONTENT_DIR}/${s}" ] || { echo "MISS command script $s"; fail=1; }
 done
 [ $fail -eq 0 ] && echo "e2e_paths: PASS" || { echo "e2e_paths: FAIL"; exit 1; }

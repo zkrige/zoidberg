@@ -61,7 +61,10 @@ deploy_mark_built "$WORK/repo" "$MARKER"
 # changes arriving in the same run's pull.
 grep -q 'deploy_rebuild_needed' "${REPO_DIR}/scripts/self-update.sh" || fail "self-update.sh not wired to deploy_rebuild_needed"
 grep -q 'deploy_mark_built' "${REPO_DIR}/scripts/self-update.sh" || fail "self-update.sh not wired to deploy_mark_built"
-grep -q '"\$LOCAL" > "\$BUILD_MARKER"' "${REPO_DIR}/scripts/self-update.sh" || fail "self-update.sh does not seed marker from pre-pull commit"
+seed_line=$(grep -n 'git rev-parse HEAD > "\$BUILD_MARKER"' "${REPO_DIR}/scripts/self-update.sh" | head -1 | cut -d: -f1)
+pull_line=$(grep -n '^sync_repo' "${REPO_DIR}/scripts/self-update.sh" | head -1 | cut -d: -f1)
+[ -n "$seed_line" ] || fail "self-update.sh does not seed marker from HEAD"
+[ "$seed_line" -lt "$pull_line" ] || fail "self-update.sh seeds the marker after the pull"
 # The marker is written only when a build FINISHES, so overlapping cron ticks
 # during a long build would each start their own build without a singleton.
 grep -q 'flock' "${REPO_DIR}/scripts/self-update.sh" || fail "self-update.sh has no singleton lock"

@@ -1,5 +1,5 @@
 #!/bin/bash
-# lib/telegram-queue.sh - Telegram plugin queue, lock, heartbeat, and auto-push helpers
+# lib/telegram-queue.sh - Telegram plugin queue, lock, and heartbeat helpers
 
 # ---------------------------------------------------------------------------
 # telegram_drain_queue - Drain queued messages in background
@@ -157,26 +157,4 @@ telegram_busy_heartbeat() {
     [ -L "$BUSY_LOCK" ] && touch -h "$BUSY_LOCK" 2>/dev/null
     sleep 30
   done
-}
-
-# ---------------------------------------------------------------------------
-# telegram_auto_push - Commit and push any changes the bot made to repos
-# ---------------------------------------------------------------------------
-telegram_auto_push() {
-  local pushed=""
-  for repo_dir in /app /home/claude/.claude/skills; do
-    if [ -d "$repo_dir/.git" ] && (! git -C "$repo_dir" diff --quiet || ! git -C "$repo_dir" diff --cached --quiet || [ -n "$(git -C "$repo_dir" ls-files --others --exclude-standard)" ]); then
-      git -C "$repo_dir" add -A
-      local summary
-      summary=$(git -C "$repo_dir" diff --cached --stat | tail -1)
-      git -C "$repo_dir" commit -m "auto: bot update ($summary)" 2>/dev/null || continue
-      if git_remote -C "$repo_dir" push origin main 2>/dev/null; then
-        local repo_name
-        repo_name=$(basename "$(git -C "$repo_dir" remote get-url origin)" .git)
-        pushed="${pushed:+${pushed}, }${repo_name}"
-        log "telegram: auto-pushed to ${repo_name}"
-      fi
-    fi
-  done
-  [ -n "$pushed" ] && tg_send "[auto-push] $pushed"
 }

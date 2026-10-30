@@ -258,8 +258,7 @@ _telegram_run_reply() {
 # _telegram_run_finalize - Auto-push, clear state, log exchange, prune memory.
 # ---------------------------------------------------------------------------
 _telegram_run_finalize() {
-  # Auto-commit and push any changes the bot made
-  telegram_auto_push
+  auto_push
 
   rm -f "$CLAUDE_PID_FILE" "$CURRENT_TASK_FILE" "$IN_PROGRESS_FILE"
 

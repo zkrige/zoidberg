@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The scheduler runs autoupdate's fetch/pull/push and telegram_auto_push inside
+# The scheduler runs autoupdate's fetch/pull/push and auto_push inside
 # its one loop. On 2026-10-20 an ssh to github.com hung with no timeout and
 # froze that loop for 1h42m: no Telegram polling, so /login never arrived while
 # the session's OAuth had expired. git_remote must bound every remote call,

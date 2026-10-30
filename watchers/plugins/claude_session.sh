@@ -20,6 +20,8 @@ CLAUDE_PROJECT_TRANSCRIPT_DIR="${HOME}/.claude/projects/-app"
 MODEL_SWITCH_LOCK="${STATE_DIR}/.model-switch.lock"
 MODEL_SWITCH_LOCK_TIMEOUT="${MODEL_SWITCH_LOCK_TIMEOUT:-45}"
 
+source "${REPO_DIR}/lib/auto-push.sh"
+
 # ---------------------------------------------------------------------------
 # claude_session_is_alive - tmux session exists and claude pid is alive
 # ---------------------------------------------------------------------------
@@ -310,6 +312,7 @@ bot_channel_wait_reply() {
   done
   cat "$reply_file"
   rm -f "$reply_file"
+  auto_push >/dev/null
 }
 
 # ---------------------------------------------------------------------------

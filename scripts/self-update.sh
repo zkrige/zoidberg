@@ -19,6 +19,9 @@ REPO_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=SCRIPTDIR/../lib/paths.sh
 source "${REPO_PATH}/lib/paths.sh"
 resolve_host_paths
+source "${REPO_PATH}/lib/repo-sync.sh"
+
+UPDATE_FAILED=0
 
 # chown to the container's uid is a Linux concern. On macOS the directories
 # belong to the operator and Docker Desktop maps uids into the container, so
@@ -38,32 +41,17 @@ cd "$REPO_PATH"
 mkdir -p "$REPO_PATH/config" "$REPO_PATH/skills"
 maybe_chown 1000:1000 "$REPO_PATH/config" "$REPO_PATH/skills"
 
-git fetch origin main --quiet
-LOCAL=$(git rev-parse HEAD)
-REMOTE=$(git rev-parse origin/main)
-
 # Seed the build marker BEFORE any pull: the running image matches the
 # pre-pull commit, so a missing marker must not swallow build changes that
 # arrive in this very run's pull (deploy_rebuild_needed's own bootstrap would
 # set it to post-pull HEAD and skip that rebuild).
 BUILD_MARKER="$REPO_PATH/state/.deployed-build-commit"
-[ -f "$BUILD_MARKER" ] || printf '%s\n' "$LOCAL" > "$BUILD_MARKER"
+[ -f "$BUILD_MARKER" ] || git rev-parse HEAD > "$BUILD_MARKER"
 
-PULLED=0
-if [ "$LOCAL" != "$REMOTE" ]; then
-  echo "[self-update] automations: $LOCAL -> $REMOTE"
-
-  # Check for local uncommitted changes (bot may have edited files)
-  if ! git diff --quiet || ! git diff --cached --quiet; then
-    echo "[self-update] stashing local changes"
-    git stash
-    git pull --ff-only origin main
-    git stash pop || echo "[self-update] WARN: stash pop conflict, changes in stash"
-  else
-    git pull --ff-only origin main
-  fi
-  PULLED=1
-fi
+sync_repo || UPDATE_FAILED=1
+PULLED=$SYNC_PULLED
+LOCAL=$SYNC_LOCAL
+REMOTE=$SYNC_REMOTE
 
 # Rebuild when build files changed since the commit the running image was
 # BUILT from (state/.deployed-build-commit), checked on EVERY run - not only
@@ -108,22 +96,9 @@ fi
 if [ -d "$SKILLS_PATH/.git" ]; then
   cd "$SKILLS_PATH"
 
-  git fetch origin main --quiet
-  SKILLS_LOCAL=$(git rev-parse HEAD)
-  SKILLS_REMOTE=$(git rev-parse origin/main)
+  sync_repo || UPDATE_FAILED=1
 
-  if [ "$SKILLS_LOCAL" != "$SKILLS_REMOTE" ]; then
-    echo "[self-update] skills: $SKILLS_LOCAL -> $SKILLS_REMOTE"
-
-    if ! git diff --quiet || ! git diff --cached --quiet; then
-      echo "[self-update] stashing local skill changes"
-      git stash
-      git pull --ff-only origin main
-      git stash pop || echo "[self-update] WARN: stash pop conflict, changes in stash"
-    else
-      git pull --ff-only origin main
-    fi
-
+  if [ "$SYNC_PULLED" = 1 ]; then
     bash setup.sh
     maybe_chown -R 1000:1000 "$SKILLS_PATH"
     echo "[self-update] $(date): skills sync complete"
@@ -134,22 +109,9 @@ fi
 if [ -d "$CONTENT_PATH/.git" ]; then
   cd "$CONTENT_PATH"
 
-  git fetch origin main --quiet
-  CONTENT_LOCAL=$(git rev-parse HEAD)
-  CONTENT_REMOTE=$(git rev-parse origin/main)
+  sync_repo || UPDATE_FAILED=1
 
-  if [ "$CONTENT_LOCAL" != "$CONTENT_REMOTE" ]; then
-    echo "[self-update] content: $CONTENT_LOCAL -> $CONTENT_REMOTE"
-
-    if ! git diff --quiet || ! git diff --cached --quiet; then
-      echo "[self-update] stashing local content changes"
-      git stash
-      git pull --ff-only origin main
-      git stash pop || echo "[self-update] WARN: stash pop conflict, changes in stash"
-    else
-      git pull --ff-only origin main
-    fi
-
+  if [ "$SYNC_PULLED" = 1 ]; then
     [ -f setup.sh ] && bash setup.sh
     maybe_chown -R 1000:1000 "$CONTENT_PATH"
 
@@ -158,7 +120,7 @@ if [ -d "$CONTENT_PATH/.git" ]; then
     # running session until it respawns. Without this it waited for the daily
     # restart. Task prompts and scripts are read fresh at dispatch and need no
     # reload, so only agents/ triggers one.
-    if git diff --name-only "$CONTENT_LOCAL" "$CONTENT_REMOTE" | grep -qE '^agents/'; then
+    if git diff --name-only "$SYNC_LOCAL" "$SYNC_REMOTE" | grep -qE '^agents/'; then
       echo "[self-update] content prompts changed, reloading via SIGHUP"
       docker kill --signal=HUP zoidberg 2>&1 || true
     fi
@@ -185,3 +147,5 @@ if [ -n "${SECRET_STORE_REPO:-}" ]; then
     echo "[self-update] WARN: secret store mirror failed for $SECRET_STORE_REPO"
   fi
 fi
+
+exit "$UPDATE_FAILED"

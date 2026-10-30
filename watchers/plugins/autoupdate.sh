@@ -60,9 +60,7 @@ autoupdate_tick() {
   # Cron tasks and submodule bumps dirty the tree without a Telegram message
   # to trigger auto-push, and a dirty tree makes pull --rebase fail and
   # hard-reset uncommitted work. Commit-and-push before pulling.
-  # telegram_auto_push is defined by telegram.sh (all plugins are sourced
-  # before any tick runs) and no-ops when the tree is clean.
-  command -v telegram_auto_push >/dev/null 2>&1 && telegram_auto_push
+  auto_push
 
   git_remote -C "$REPO_DIR" fetch origin main >/dev/null 2>&1 || {
     log "autoupdate: git fetch failed"
