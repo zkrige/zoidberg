@@ -441,6 +441,12 @@ sets them:
 - `WHISPER_MODEL` (default `base`) - any name whisper.cpp's `download-ggml-model.sh` accepts. Bigger is more accurate and slower; `.en` variants are English-only.
 - `WHISPER_NATIVE` (default `0`) - `1` compiles `-mcpu=native` against the BUILD host's CPU, worth ~2x. Correct for the normal deploy here (`docker compose up -d --build` runs on the machine that runs the container) and wrong the moment that image moves to a different CPU, where it faults rather than running slowly.
 
+The App Store Connect CLI `asc` is installed at `/usr/local/bin/asc`, pinned by
+`ASC_VERSION` (default `6.0.0`) and verified against the release checksums file
+during the build, so a mismatch fails the build. The asset is `linux_arm64`, so
+the build fails on any other architecture. `ASC_TELEMETRY_DISABLED=1` and
+`ASC_CONFIG_PATH=/home/claude/.asc/config.json` are set in the image.
+
 The build also sets `BUILD_SHARED_LIBS=OFF`, so one static binary ships without
 libwhisper/libggml beside it. Speed is host-dependent: on the RK3588 reference
 box, 8 threads against a 60s clip, `base` takes 16.3s at the defaults and 8.6s

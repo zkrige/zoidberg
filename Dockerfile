@@ -132,6 +132,17 @@ RUN npm install -g @playwright/mcp playwright \
 
 RUN npm install -g cf
 
+ARG ASC_VERSION=6.0.0
+RUN test "$(dpkg --print-architecture)" = "arm64" \
+    && mkdir /tmp/asc && cd /tmp/asc \
+    && curl -fsSLO "https://github.com/rorkai/App-Store-Connect-CLI/releases/download/${ASC_VERSION}/asc_${ASC_VERSION}_linux_arm64" \
+    && curl -fsSLO "https://github.com/rorkai/App-Store-Connect-CLI/releases/download/${ASC_VERSION}/asc_${ASC_VERSION}_checksums.txt" \
+    && sha256sum -c --ignore-missing "asc_${ASC_VERSION}_checksums.txt" \
+    && install -m 755 "asc_${ASC_VERSION}_linux_arm64" /usr/local/bin/asc \
+    && cd / && rm -r /tmp/asc
+ENV ASC_TELEMETRY_DISABLED=1
+ENV ASC_CONFIG_PATH=/home/claude/.asc/config.json
+
 # whisper.cpp binary + model, built in the whisper-payload stage above (empty
 # when ENABLE_WHISPER=0). `transcribe <audio>` is the only entry point: it
 # resamples to the 16kHz mono WAV whisper.cpp needs and prints the transcript
