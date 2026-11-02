@@ -132,7 +132,7 @@ RUN npm install -g @playwright/mcp playwright \
 
 RUN npm install -g cf
 
-ARG ASC_VERSION=6.0.0
+ARG ASC_VERSION=6.3.0
 RUN test "$(dpkg --print-architecture)" = "arm64" \
     && mkdir /tmp/asc && cd /tmp/asc \
     && curl -fsSLO "https://github.com/rorkai/App-Store-Connect-CLI/releases/download/${ASC_VERSION}/asc_${ASC_VERSION}_linux_arm64" \
