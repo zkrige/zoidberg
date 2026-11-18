@@ -4,6 +4,7 @@ SRC="$(cd "$(dirname "$0")/.." && pwd)"
 
 fail() { echo "FAIL self_update_alerts: $1"; exit 1; }
 
+unset REPO_PATH CONTENT_PATH SKILLS_PATH REPO_DIR CONTENT_DIR SKILLS_DIR STATE_DIR
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 export GIT_CONFIG_GLOBAL="$WORK/gitconfig"
