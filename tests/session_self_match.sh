@@ -84,6 +84,11 @@ printf '{"type":"assistant","isApiErrorMessage":true,"timestamp":"%s","message":
 if ! _claude_session_auth_expired; then
   echo "FAIL auth-post-login: missed an error newer than the credentials"; exit 1
 fi
+printf '{"type":"assistant","isApiErrorMessage":true,"timestamp":"%s","message":{"role":"assistant","content":[{"type":"text","text":"Login reached its time limit · Please run /login"}]}}\n' \
+  "$(iso $((CRED_MTIME + 180)))" >> "$T"
+if ! _claude_session_auth_expired; then
+  echo "FAIL auth-time-limit: missed the CLI 2.1.327 login time-limit error"; exit 1
+fi
 
 # --- invariant: no pane-grepped literal may appear in the plugin source ------
 # Guards against a future edit reintroducing a literal pattern.

@@ -37,7 +37,7 @@ _claude_session_auth_expired() {
            then ([.message.content[]? | .text // ""] | join(" "))
            else "" end' 2>/dev/null \
     | tail -1)
-  case "$last" in *"Login expired"*) return 0 ;; esac
+  case "$last" in *"Please run /login"*) return 0 ;; esac
   return 1
 }
 

@@ -582,8 +582,14 @@ credentials before looking at any individual task.
 
 `claude auth status` is useless here. It reports `loggedIn: true` while every
 call returns 401. The authoritative signal is the transcript: the newest
-assistant record carries `isApiErrorMessage: true` with the text
-`Login expired · Please run /login`. `_claude_session_auth_expired`
+assistant record carries `isApiErrorMessage: true` and text ending
+`Please run /login`. The prefix varies by cause and CLI version: `Login
+expired` for a dead refresh token, `Login reached its time limit` (CLI 2.1.327,
+`.credentials.json` `loginEnded: "time_limit"`, `expiresAt: 0`) when the login
+hits its absolute lifetime. The check matches only the `Please run /login`
+suffix; matching `Login expired` alone missed the time-limit form on
+2026-11-17, so the bot sat down for 13 hours with no alert while the health
+probe respawned the session every 7 minutes. `_claude_session_auth_expired`
 (`watchers/plugins/claude_session/auth.sh:28`) reads that record, and
 `claude_session_check_auth` sends a debounced Telegram alert on it each tick.
 Rendered pane content cannot forge a transcript record, which is why the check
