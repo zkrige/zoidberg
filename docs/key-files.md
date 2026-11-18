@@ -1,0 +1,43 @@
+# Key files
+- `watchers/scheduler.sh` - thin orchestrator (lock, wake detection, SIGHUP reload, plugin loader)
+- `watchers/plugins/claude_session.sh` - always-on interactive session: spawn, tick, busy scrape. Sources `watchers/plugins/claude_session/` (a subdirectory, so the plugin loader's `*.sh` glob does not treat the parts as plugins): `bot_channel.sh` (post, wait, request), `model.sh` (pending switch, `claude_session_switch_model`), `auth.sh` (expired-login alert), `health.sh` (health probe)
+- `watchers/plugins/telegram.sh` - Telegram bot plugin (polling, queue, streaming, commands)
+- `watchers/plugins/cron.sh` - cron engine (schedule matching, pre_check gates, dispatch)
+- `watchers/plugins/whatsapp.sh` - WhatsApp webhook plugin (instant dispatch on self-chat)
+- `watchers/plugins/autoupdate.sh` - in-container backstop (pull, classify, SIGHUP or defer)
+- `lib/channels/bot-channel/server.ts` - bot-channel MCP server (event in; `reply` tool ends the request, `progress` tool sends an interim update and keeps it open)
+- `.mcp.json` - registers the session's MCP servers: `bot-channel` (transport, above) and `playwright` (`@playwright/mcp`, headless Chromium baked into the image at build time - navigate/click/fill/screenshot for sites that need a login, since WebFetch can't authenticate)
+- `lib/common.sh` - shared utilities (JSON parsing, project matching, logging, notify)
+- `lib/auto-push.sh` - `auto_push`: commit and push the bot's edits in `/app`, the skills repo and the content repo (rebase first for the content repo)
+- `lib/repo-sync.sh` - `sync_repo` for `scripts/self-update.sh`: fetch, stash, ff-only pull, pop, with one deduplicated Telegram alert per distinct failure and one on recovery
+- `lib/git-failure.sh` - `git_failure_message`: the `<repo> failed: <command>: <first error line>` text both of the above send
+- `lib/content-reload.sh` - `content_prompts_changed`: whether a commit range touched `agents/`, shared by `scripts/self-update.sh` and `auto_push`
+- `lib/paths.sh` - host-side path resolution and the `.env` reader/writer, shared by `install.sh`, `setup.sh` and `scripts/self-update.sh`
+- `lib/telegram-*.sh` - Telegram plugin helpers: `-api` (Bot API), `-commands`, `-md` (markdown), `-process`, `-queue`, `-run` (dispatch/stream), `-session` (sessions/history/prompt-sections)
+- `lib/whatsapp-dispatch.sh` - WhatsApp triage dispatcher (called by the webhook listener)
+- `lib/claude-login.sh` - Claude OAuth sign-in (tmux pane, URL scrape, bounded polls), shared by `setup.sh` and the Telegram `/login` handler
+- `lib/evolution.sh` - self-evolve agent (detects failures, improves prompts)
+- `agents/guardrails.txt` - non-negotiable guardrails (framework prompt, session system prompt)
+- `agents/telegram-system.txt` - Telegram operating instructions (framework prompt, session system prompt)
+- `agents/prompt-sections.txt` - attribution marker + section headers (framework prompt)
+- `agents/*.txt` - framework behavior prompts only (guardrails, telegram-system, prompt-sections, memory-prune-prompt, self-evolve); resolved via `framework_prompt`, extended by `config/agents/<name>.local.txt`
+- `examples/content/` - starter layout for your own content overlay (see `examples/README.md`)
+- `config/` - content overlay (a separate private repo you create, mounted or checked out here), resolved via `CONTENT_DIR`:
+  - `config/schedule.json` - task schedule definitions (source of truth for the task whitelist)
+  - `config/models.json` - model/effort preferences
+  - `config/config.json` - central config (endpoints, Bitbucket workspace, git identity); gitignored, placed out-of-band on the host
+  - `config/secrets.json` - Telegram bot token and chat ID; gitignored, placed out-of-band on the host
+  - `config/agents/*.txt` - prompt files for scheduled tasks
+  - `config/agents/*.local.txt` - operator additions appended to the framework prompt of the same name (guardrails, telegram-system, self-evolve)
+  - `config/scripts/*` - run-scripts (`pre_check`/`command` entries in `schedule.json`)
+  - `config/config.example.json`, `config/secrets.example.json` - templates for the two gitignored files above
+- `scripts/self-update.sh` - host-cron git-driven deploy (pull + reload/rebuild + skills + content sync)
+- `scripts/scheduled-restart.sh` - host-cron daily container restart (tmux/auth/session hygiene), deferred while a Telegram turn or a cron task is in flight
+- `docker/entrypoint.sh` - container startup (auth check, git config, `exec scheduler.sh`)
+- `docker/claude-settings.jq` - the `~/.claude/settings.json` overlay the entrypoint applies at every start: bypass mode, pre-seeded `tui`, and the `PreModelSwitch` allow hook that keeps `/model` from opening a confirm picker
+- `docker/sync-secret-store.sh` - in-container decrypt of `store/volume-backup/credentials.enc.json` into `~/.claude/config/credentials.json` and `/app/store/credentials.json`; run by the entrypoint at every start and by `scripts/self-update.sh` when the mirrored ciphertext changes
+- `docker/entrypoint.sh` also links `~/.claude/config/resolve-cred.py` to `resolve-cred.py` in the mounted claude-skills repo, so skills resolve credentials from that plaintext `credentials.json` exactly as on the Mac
+- `docker/transcribe` - voice-note transcription (`transcribe <audio-file>` → transcript on stdout), wrapping the whisper.cpp binary baked into the image
+- `install.sh` - one-command bootstrap: prerequisites, clone, content overlay, then `setup.sh run`
+- `setup.sh` - deterministic setup dispatcher: usage text, output helpers, path resolution, `json_write`, `ask`, and the subcommand `case`
+- `lib/setup-*.sh` - the subcommands themselves, sourced by `setup.sh`: `-telegram` (token, chat-id discovery, installer messages), `-config` (`feature`, `identity`, `env`, `status`), `-login` (Claude sign-in), `-cron` (host cron entries), `-verify` (end-to-end check), `-run` (the install sequence)

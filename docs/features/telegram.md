@@ -6,7 +6,7 @@ Long-polls the Telegram Bot API for messages from one authorized chat, queues
 and dispatches them to the interactive Claude session, streams the response
 back as it's produced, and implements the bot's `/`-commands (`/status`,
 `/session`, `/feedback`, `/retry`, `/opus`/`/sonnet`/`/haiku`, `/reload`,
-`/restart`, etc. - full list in the top-level `CLAUDE.md`). It is also the
+`/restart`, etc. - full list in `docs/telegram-bot.md`). It is also the
 default `notify` provider: `telegram_init` sets `NOTIFY_FN="tg_send"`
 (`watchers/plugins/telegram.sh:58`), so cron task output and scheduler
 notifications go to Telegram whenever this feature is on.
