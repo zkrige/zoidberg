@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+. "$(dirname "$0")/ai-trailer-patterns.sh"
+cleaned="$(grep -viE "$AI_TRAILER_REGEX" "$1" || true)"
+printf '%s\n' "$cleaned" > "$1"
+chain_to_repo_hook commit-msg "$@"

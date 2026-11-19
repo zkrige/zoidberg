@@ -115,6 +115,12 @@ git config --global user.email "$(jq -r '.git.user_email' /app/config/config.jso
 git config --global --add safe.directory /home/claude/.claude/skills
 git config --global --add safe.directory /app
 
+# Hard guard: strip AI attribution trailers from every commit and refuse pushes that carry them.
+# GIT_CONFIG_* outranks a repo's own core.hooksPath (husky); the hooks chain back to that path.
+chmod +x /app/docker/git-hooks/commit-msg /app/docker/git-hooks/pre-push
+git config --global core.hooksPath /app/docker/git-hooks
+export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/app/docker/git-hooks
+
 # Log loaded skills
 if ls /home/claude/.claude/skills/*/SKILL.md >/dev/null 2>&1; then
   echo "[entrypoint] Skills loaded: $(ls -d /home/claude/.claude/skills/*/ 2>/dev/null | wc -l) skills"

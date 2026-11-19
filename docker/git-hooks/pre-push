@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+. "$(dirname "$0")/ai-trailer-patterns.sh"
+zero="0000000000000000000000000000000000000000"
+remote_name="$1"
+refs="$(cat)"
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ -n "${local_sha:-}" ] && [ "$local_sha" != "$zero" ] || continue
+  if [ "$remote_sha" = "$zero" ]; then
+    range=("$local_sha" --not "--remotes=${remote_name}")
+  else
+    range=("${remote_sha}..${local_sha}")
+  fi
+  offending="$(git log --format='%h %B' "${range[@]}" | grep -iE "$AI_TRAILER_REGEX" || true)"
+  if [ -n "$offending" ]; then
+    echo "pre-push: refusing to push ${local_ref}: outgoing commits carry AI attribution lines:" >&2
+    echo "$offending" >&2
+    exit 1
+  fi
+done <<<"$refs"
+printf '%s\n' "$refs" | chain_to_repo_hook pre-push "$@"

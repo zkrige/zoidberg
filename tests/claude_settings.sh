@@ -22,6 +22,10 @@ fresh=$(printf '{}' | jq -f "$FILTER")
 [ "$(jq -r .permissions.defaultMode <<<"$fresh")" = "bypassPermissions" ] || fail "fresh settings not in bypass mode"
 [ "$(jq -r .tui <<<"$fresh")" = "fullscreen" ] || fail "fresh settings missing pre-seeded tui"
 
+[ "$(jq -r .attribution.commit <<<"$fresh")" = "" ] && [ "$(jq -r .attribution.sessionUrl <<<"$fresh")" = "false" ] || fail "fresh settings do not suppress attribution"
+kept=$(printf '{"attribution":{"commit":"x"}}' | jq -f "$FILTER")
+[ "$(jq -r .attribution.commit <<<"$kept")" = "x" ] || fail "operator attribution was overwritten"
+
 grep -q 'jq -f /app/docker/claude-settings.jq' "${REPO_DIR}/docker/entrypoint.sh" || fail "entrypoint.sh not wired to claude-settings.jq"
 
 echo PASS
