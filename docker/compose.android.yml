@@ -1,0 +1,8 @@
+services:
+  zoidberg:
+    volumes:
+      - /dev/bus/usb:/dev/bus/usb
+    device_cgroup_rules:
+      - "c 189:* rmw"
+    environment:
+      - ADB_VENDOR_KEYS=/home/claude/.claude/android/adbkey

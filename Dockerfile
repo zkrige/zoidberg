@@ -106,6 +106,8 @@ FROM whisper-payload-${ENABLE_WHISPER} AS whisper-payload
 FROM debian:bookworm-slim AS final
 ARG ENABLE_WHATSAPP=0
 ARG ENABLE_WHISPER=1
+ARG ENABLE_ANDROID=0
+ARG AGENT_DEVICE_VERSION=0.21.36
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -131,6 +133,12 @@ RUN npm install -g @playwright/mcp playwright \
     && chmod -R a+rX /opt/ms-playwright
 
 RUN npm install -g cf
+
+RUN if [ "$ENABLE_ANDROID" = "1" ]; then \
+      apt-get update && apt-get install -y --no-install-recommends adb \
+      && rm -rf /var/lib/apt/lists/* \
+      && npm install -g "agent-device@${AGENT_DEVICE_VERSION}"; \
+    fi
 
 ARG ASC_VERSION=7.2.0
 RUN test "$(dpkg --print-architecture)" = "arm64" \

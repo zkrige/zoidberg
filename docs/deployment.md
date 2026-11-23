@@ -60,6 +60,32 @@ sets them:
 - `WHISPER_MODEL` (default `base`) - any name whisper.cpp's `download-ggml-model.sh` accepts. Bigger is more accurate and slower; `.en` variants are English-only.
 - `WHISPER_NATIVE` (default `0`) - `1` compiles `-mcpu=native` against the BUILD host's CPU, worth ~2x. Correct for the normal deploy here (`docker compose up -d --build` runs on the machine that runs the container) and wrong the moment that image moves to a different CPU, where it faults rather than running slowly.
 
+Android device control is an opt-in build. `ENABLE_ANDROID=1` (default `0`)
+installs Debian's `adb` client and `agent-device`, pinned by
+`AGENT_DEVICE_VERSION`, so a task can drive apps on a phone or tablet plugged
+into the host's USB. The image alone cannot see the device: the
+`docker/compose.android.yml` layer bind-mounts `/dev/bus/usb` (a bind, not a
+`devices` entry, so a device plugged in after the container starts still
+appears) and adds the cgroup rule `c 189:* rmw` for USB character devices.
+Turn both on from `.env`:
+
+```
+ENABLE_ANDROID=1
+COMPOSE_FILE=docker-compose.yml:docker/compose.android.yml
+```
+
+The host also needs a udev rule giving the container user access to the
+device node, for example
+`SUBSYSTEM=="usb", ATTR{idVendor}=="<vendor>", MODE="0666"` in
+`/etc/udev/rules.d/51-android.rules`, then `udevadm control --reload-rules`
+and a replug. `ADB_VENDOR_KEYS` points adb at
+`/home/claude/.claude/android/adbkey`, inside the persistent `claude-home`
+volume, so the device's "Allow USB debugging" approval survives rebuilds.
+Placing a key there that the device already trusts skips the prompt entirely.
+Changing `.env` does not trigger the deploy loop's rebuild (only build files
+do), so run `docker compose up -d --build --force-recreate` once after editing
+it.
+
 The App Store Connect CLI `asc` is installed at `/usr/local/bin/asc`, pinned by
 `ASC_VERSION` (default `6.0.0`) and verified against the release checksums file
 during the build, so a mismatch fails the build. The asset is `linux_arm64`, so

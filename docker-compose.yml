@@ -17,6 +17,7 @@ services:
         # Safe when you build on the machine you deploy on (the default here);
         # it will fault if that image is then moved to a different CPU.
         WHISPER_NATIVE: ${WHISPER_NATIVE:-0}
+        ENABLE_ANDROID: ${ENABLE_ANDROID:-0}
     container_name: zoidberg
     restart: unless-stopped
     volumes:
